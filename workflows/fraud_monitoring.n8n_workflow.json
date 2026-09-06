@@ -1,0 +1,492 @@
+{
+  "name": "Fraud Monitoring — Digital Banking Backend (v1.2)",
+  "nodes": [
+    {
+      "id": "3a03e760-4cb7-47e3-ba01-9e687b8b5f47",
+      "name": "When Called (Sub-workflow Trigger)",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "transaction_id"
+            },
+            {
+              "name": "account_id"
+            },
+            {
+              "name": "amount"
+            },
+            {
+              "name": "score_result"
+            }
+          ]
+        }
+      },
+      "notes": "Called from Transaction Execution (post-execute) and Standing Order Scheduler (pre-execute) whenever /fraud/score returns flag=true (FR-5.7, FR-3.5). score_result carries the already-computed rule_score/pattern_match if the caller did the scoring call."
+    },
+    {
+      "id": "507053f5-3e8e-42a1-8bc5-0660120e7b8f",
+      "name": "Score Transaction (Python: /fraud/score)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        250,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env[\"PYTHON_SERVICES_BASE_URL\"]}}/fraud/score",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "transaction_id",
+              "value": "={{$json[\"transaction_id\"]}}"
+            },
+            {
+              "name": "account_id",
+              "value": "={{$json[\"account_id\"]}}"
+            },
+            {
+              "name": "amount",
+              "value": "={{$json[\"amount\"]}}"
+            }
+          ]
+        }
+      },
+      "notes": "Single call performs BOTH the rule-based/anomaly check (e.g. 5x average spend) AND the Pinecone fraud-pattern lookup internally — both signals returned separately, never one opaque number (FR-5.7)."
+    },
+    {
+      "id": "50c70427-9f77-493d-a055-43614c07aee1",
+      "name": "Combine Score (Function)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        500,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Folds any Pinecone pattern match into the fraud score as a NAMED, visible\n// contributing factor -- never a silent adjustment (FR-5.7).\nconst r = $input.first().json;\nconst reasons = [r.rule_reason];\nif (r.pattern_match && r.pattern_match.matched) {\n  reasons.push(`Similar historical pattern (similarity ${r.pattern_match.similarity_score}): ${r.pattern_match.summary}`);\n}\nreturn [{ json: { ...r, combined_reasons: reasons } }];"
+      }
+    },
+    {
+      "id": "36da4744-276c-43a3-a74c-f561c5ea9ba6",
+      "name": "Place Hold (Postgres insert: fraud_flags)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        750,
+        0
+      ],
+      "parameters": {
+        "operation": "insert",
+        "table": "fraud_flags",
+        "columns": "transaction_id,score,status"
+      },
+      "notes": "fraud_flags row created with status=HELD; the transaction itself moves to status=HELD. This is an unsupervised action (SRS 3.8) — placing the hold does not require human sign-off, only RELEASING it does."
+    },
+    {
+      "id": "b39b0284-03aa-4882-9a28-07f2d1e61323",
+      "name": "Record Pattern Match (Postgres insert: fraud_pattern_matches)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        -150
+      ],
+      "parameters": {
+        "operation": "insert",
+        "table": "fraud_pattern_matches",
+        "columns": "fraud_flag_id,pinecone_match_id,similarity_score,matched_pattern_summary"
+      },
+      "notes": "Only runs if pattern_match.matched = true and similarity_score >= 0.80 (FR-5.7)."
+    },
+    {
+      "id": "4c2e8b22-7a77-4165-ae8c-bc1a8425619c",
+      "name": "Generate Explanation (Groq, redacted input)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "text": "={{$json[\"combined_reasons\"].join('; ')}}",
+        "promptType": "define",
+        "text2": "Write a plain-language, customer-facing explanation of why this transaction was held, naming both the anomaly check and any matched historical pattern. Do not invent details beyond the given reasons. Input is already PII-redacted."
+      },
+      "notes": "NFR-6: every automated fraud flag must have a retrievable, human-readable reason. Stored in fraud_flags.explanation."
+    },
+    {
+      "id": "a766c17c-11c9-4577-950d-22573e2ac5c1",
+      "name": "Store Explanation (Postgres update: fraud_flags)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        0
+      ],
+      "parameters": {
+        "operation": "update",
+        "table": "fraud_flags",
+        "updateKey": "id",
+        "columns": "explanation"
+      }
+    },
+    {
+      "id": "732043c9-9837-4dde-9588-005180a76423",
+      "name": "Send Confirm-It-Was-Me Link (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        -150
+      ],
+      "parameters": {
+        "operation": "send",
+        "message": "A recent transaction on your account has been held for review. If this was you, click the link below to confirm — you will also receive a one-time code by phone to complete this."
+      },
+      "notes": "Unsupervised action (SRS 3.8): placing the hold AND sending this self-service link may both execute without human sign-off."
+    },
+    {
+      "id": "0374e09b-bf24-4547-b015-052d2b8aa8e4",
+      "name": "Send Phone OTP (SMS service) [NEW v1.2]",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1750,
+        -150
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env[\"PYTHON_SERVICES_BASE_URL\"]}}/auth/issue-challenge-code",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "context",
+              "value": "FRAUD_HOLD"
+            },
+            {
+              "name": "account_id",
+              "value": "={{$json[\"account_id\"]}}"
+            }
+          ]
+        }
+      },
+      "notes": "FR-5.8: OTP sent to users.phone, independent of the email that carried the confirm link -- NOT embedded in the email itself. If no phone on file (422), route straight to Escalate to Manual Review instead."
+    },
+    {
+      "id": "07f845be-9e8c-4747-8e74-893ce8eaeb74",
+      "name": "Phone on File?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        -150
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json[\"statusCode\"]}}",
+              "rightValue": 422,
+              "operator": {
+                "type": "number",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "64013543-2308-41a5-a85a-2d0cb7f5ae5b",
+      "name": "Wait for Confirmation (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        -250
+      ],
+      "parameters": {
+        "path": "fraud-hold-confirm",
+        "httpMethod": "POST"
+      },
+      "notes": "Fires when the customer clicks the confirm link AND submits the phone OTP."
+    },
+    {
+      "id": "9d25fd1a-04d2-482f-9e80-166d484b7f4d",
+      "name": "Verify OTP (Python: /auth/verify-otp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        2500,
+        -250
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env[\"PYTHON_SERVICES_BASE_URL\"]}}/auth/verify-otp",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "context",
+              "value": "FRAUD_HOLD"
+            },
+            {
+              "name": "reference_id",
+              "value": "={{$json[\"fraud_flag_id\"]}}"
+            },
+            {
+              "name": "otp",
+              "value": "={{$json[\"otp\"]}}"
+            }
+          ]
+        }
+      },
+      "notes": "410 = OTP expired; 409 = already resolved (idempotent re-click); 422 = no phone on file (should already have been routed to manual review earlier)."
+    },
+    {
+      "id": "95b060b8-3952-494a-83c4-3f465987eec0",
+      "name": "OTP Verified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        2750,
+        -250
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json[\"verified\"]}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "e24fbc25-a9b4-4aab-b867-178e72bf0561",
+      "name": "Auto-Release Hold (Postgres update: fraud_flags)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        3000,
+        -350
+      ],
+      "parameters": {
+        "operation": "update",
+        "table": "fraud_flags",
+        "updateKey": "id",
+        "columns": "status,otp_confirmed_at"
+      },
+      "notes": "status = CONFIRMED_LEGIT, otp_confirmed_at = now(). This automatic release is UNSUPERVISED (SRS 3.8) — but ONLY because both the link click and the independent phone OTP succeeded."
+    },
+    {
+      "id": "e759ac41-f78c-4adc-b146-f1e3b83fc61c",
+      "name": "Escalate to Manual Fraud Review (Postgres + Gmail internal)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        3000,
+        -100
+      ],
+      "parameters": {
+        "operation": "send",
+        "message": "Fraud hold unresolved: customer disputed, did not respond, OTP failed, or no phone on file. Manual review required to confirm as CONFIRMED_FRAUD or release."
+      },
+      "notes": "Human sign-off action (SRS 3.8): releasing a disputed/unresponded hold, and confirming CONFIRMED_FRAUD, are NEVER automated -- covers unconfirmed, denied, OTP-failed, and no-phone-on-file cases alike."
+    }
+  ],
+  "connections": {
+    "When Called (Sub-workflow Trigger)": {
+      "main": [
+        [
+          {
+            "node": "Score Transaction (Python: /fraud/score)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Transaction (Python: /fraud/score)": {
+      "main": [
+        [
+          {
+            "node": "Combine Score (Function)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Score (Function)": {
+      "main": [
+        [
+          {
+            "node": "Place Hold (Postgres insert: fraud_flags)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Place Hold (Postgres insert: fraud_flags)": {
+      "main": [
+        [
+          {
+            "node": "Record Pattern Match (Postgres insert: fraud_pattern_matches)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate Explanation (Groq, redacted input)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Explanation (Groq, redacted input)": {
+      "main": [
+        [
+          {
+            "node": "Store Explanation (Postgres update: fraud_flags)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Explanation (Postgres update: fraud_flags)": {
+      "main": [
+        [
+          {
+            "node": "Send Confirm-It-Was-Me Link (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Confirm-It-Was-Me Link (Gmail)": {
+      "main": [
+        [
+          {
+            "node": "Send Phone OTP (SMS service) [NEW v1.2]",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Phone OTP (SMS service) [NEW v1.2]": {
+      "main": [
+        [
+          {
+            "node": "Phone on File?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Phone on File?": {
+      "main": [
+        [
+          {
+            "node": "Wait for Confirmation (Webhook)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Escalate to Manual Fraud Review (Postgres + Gmail internal)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Confirmation (Webhook)": {
+      "main": [
+        [
+          {
+            "node": "Verify OTP (Python: /auth/verify-otp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify OTP (Python: /auth/verify-otp)": {
+      "main": [
+        [
+          {
+            "node": "OTP Verified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OTP Verified?": {
+      "main": [
+        [
+          {
+            "node": "Auto-Release Hold (Postgres update: fraud_flags)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Escalate to Manual Fraud Review (Postgres + Gmail internal)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Called from Transaction Execution (post-execute) and Standing Order Scheduler (pre-execute) whenever /fraud/score flags a transaction. Places an immediate hold (unsupervised), generates a plain-language explanation naming both the anomaly check and any Pinecone-matched historical pattern (FR-5.6/FR-5.7), and requires the customer to confirm via BOTH the emailed link AND an independent phone OTP (FR-5.8) before auto-releasing. Any dispute, non-response, OTP failure, or missing phone number always escalates to human sign-off -- never auto-resolved either way."
+  },
+  "pinData": {},
+  "versionId": "157a0ee0-ac8d-43df-a524-edc7a51092ef",
+  "id": "3f4ec80b-fc68-412d-b6ab-87005b968864",
+  "tags": []
+}

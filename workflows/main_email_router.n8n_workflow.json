@@ -1,0 +1,658 @@
+{
+  "name": "Main Email Router — Digital Banking Backend (v1.2)",
+  "nodes": [
+    {
+      "id": "c7d9188e-9612-48b5-9abe-4a613edab461",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "labelIds": [
+            "INBOX"
+          ]
+        }
+      },
+      "notes": "Polls the bank support inbox for new customer email. Carries threadId for conversation continuity (used by challenge codes, second-signature approvals, etc.)."
+    },
+    {
+      "id": "62bcc712-3cff-45e1-a849-5df1945a4702",
+      "name": "Verify Sender (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        250,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ah.id AS account_holder_id, ah.account_id, ah.role, ah.permission, a.status AS account_status, a.authority_type FROM account_holders ah JOIN accounts a ON a.id = ah.account_id JOIN users u ON u.id = ah.user_id WHERE u.email = '{{$json[\"from\"][\"value\"][0][\"address\"]\"}}';"
+      },
+      "notes": "FR-6.12: resolves the From-address against account_holders. If it returns >1 row and the request body does not name an account, route to the disambiguation clarification branch (Confidence Check) instead of guessing."
+    },
+    {
+      "id": "1db0c5db-af6b-4fe9-8750-6e90a0234a65",
+      "name": "Sender Registered?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        500,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{$json.length}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "notes": "Unregistered senders are flagged, not processed (SRS Sec 2)."
+    },
+    {
+      "id": "9dcea067-da4a-4729-b2c5-1a712f6547d1",
+      "name": "Log Unregistered Sender",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        750,
+        150
+      ],
+      "parameters": {
+        "operation": "insert",
+        "table": "email_audit_log",
+        "columns": "thread_id,sender_email,intent,action_taken,redaction_applied"
+      },
+      "notes": "Unregistered/unresolvable sender -> logged, no further action taken."
+    },
+    {
+      "id": "685b5585-745d-4623-b7fc-8e3815a35977",
+      "name": "Account Status Branch",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        750,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{$json[\"account_status\"]}}",
+              "rightValue": "SUSPENDED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "notes": "[NEW v1.2] If the resolved account is SUSPENDED, skip normal classification entirely and route to the Account Reactivation workflow."
+    },
+    {
+      "id": "678f76ac-cc30-476d-9c1f-e21fda178cd5",
+      "name": "Execute Workflow: Account Reactivation",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        -100
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "value": "ACCOUNT_REACTIVATION_WORKFLOW_ID",
+          "mode": "id"
+        }
+      },
+      "notes": "Points at the separately-built 'Account Reactivation' workflow (see n8n Workflow Spec Sec. 12)."
+    },
+    {
+      "id": "0b301f3b-1516-4693-a303-c247c7754837",
+      "name": "Extract Password (Function)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// FR-6.7: pull password/challenge-code tokens out of the raw body\n// BEFORE any remaining text is sent to redaction or the LLM.\nconst body = $input.first().json.textPlain || '';\nconst pwMatch = body.match(/password\\s*:\\s*(\\S+)/i);\nconst codeMatch = body.match(/code\\s*:\\s*(\\d{6})/i);\nconst stripped = body\n  .replace(/password\\s*:\\s*\\S+/i, '')\n  .replace(/code\\s*:\\s*\\d{6}/i, '');\nreturn [{\n  json: {\n    ...$input.first().json,\n    extracted_password: pwMatch ? pwMatch[1] : null,\n    extracted_challenge_code: codeMatch ? codeMatch[1] : null,\n    body_stripped: stripped\n  }\n}];"
+      },
+      "notes": "No LLM node may run before this one, with no exceptions (n8n Spec Sec. 14)."
+    },
+    {
+      "id": "ea07ae3e-f0a1-46d8-9cf0-2ad4a8a43905",
+      "name": "Redact PII (Python service)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env[\"PYTHON_SERVICES_BASE_URL\"]}}/pii/redact",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{$json[\"body_stripped\"]}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "FR-7.1. Tokenizes account numbers, names, amounts before Groq ever sees them."
+    },
+    {
+      "id": "774caf44-8db5-4c67-a08a-2d75c3dd3375",
+      "name": "Classify Intent (Groq via LangChain)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        100
+      ],
+      "parameters": {
+        "text": "={{$json[\"redacted_text\"]}}",
+        "promptType": "define",
+        "text2": "You are a banking intent classifier. Return STRICT JSON only: {\"intent\": \"TRANSACTION|STATEMENT|SUPPORT|ACCOUNT_DETAILS|ACCOUNT_CLOSURE\", \"amount\": string|null, \"recipient_account_token\": string|null, \"confidence\": number}. Input is already PII-redacted; never invent an intent outside this list."
+      },
+      "notes": "Model: llama-3.3-70b-versatile via Groq credential. Runs only on redacted text (FR-6.7, FR-7.1)."
+    },
+    {
+      "id": "5439b234-b8fc-482e-8cff-c254702c9537",
+      "name": "Confidence Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1750,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{$json[\"confidence\"]}}",
+              "rightValue": 0.75,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "notes": "Low confidence, missing required fields, or unresolved multi-account sender -> clarification reply (FR-6.12), never a guess."
+    },
+    {
+      "id": "a0fc3013-15a0-4251-aad4-b736401eeef9",
+      "name": "Send Clarification Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        250
+      ],
+      "parameters": {
+        "operation": "reply",
+        "message": "We could not confidently determine your request (or your email is linked to more than one account). Please reply specifying the account and the exact action you'd like to take."
+      },
+      "notes": "Also used for FR-6.12 sender disambiguation replies."
+    },
+    {
+      "id": "cec27be6-d6bb-4b7b-929e-125724905c7d",
+      "name": "Route by Intent (Switch)",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        0
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json[\"intent\"]}}",
+                    "rightValue": "TRANSACTION",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Transaction"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json[\"intent\"]}}",
+                    "rightValue": "STATEMENT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Statement"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json[\"intent\"]}}",
+                    "rightValue": "SUPPORT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Support"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json[\"intent\"]}}",
+                    "rightValue": "ACCOUNT_DETAILS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "AccountDetails"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json[\"intent\"]}}",
+                    "rightValue": "ACCOUNT_CLOSURE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "AccountClosure"
+            }
+          ]
+        }
+      },
+      "notes": "Branches to the 5 sub-workflows described in the n8n Workflow Specification."
+    },
+    {
+      "id": "606410a1-a0e2-4523-93b9-ce1f96623c98",
+      "name": "Execute Workflow: Transaction Execution",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        -200
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "value": "TRANSACTION_EXECUTION_WORKFLOW_ID",
+          "mode": "id"
+        }
+      }
+    },
+    {
+      "id": "e5ea4521-c43f-4b15-aed4-72d140fb4c4b",
+      "name": "Execute Workflow: Statement Request",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        -50
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "value": "STATEMENT_REQUEST_WORKFLOW_ID",
+          "mode": "id"
+        }
+      }
+    },
+    {
+      "id": "0ba20bb7-2285-43fe-a89f-831726517523",
+      "name": "Execute Workflow: Support / RAG Draft",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        100
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "value": "SUPPORT_RAG_WORKFLOW_ID",
+          "mode": "id"
+        }
+      }
+    },
+    {
+      "id": "6f989fe0-33bc-43f5-ae5b-1903e6ffff37",
+      "name": "Reply: Account Details",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        250
+      ],
+      "parameters": {
+        "operation": "reply",
+        "message": "Your balance/account details (after password verification) go here."
+      }
+    },
+    {
+      "id": "40bc576d-e8aa-461f-a915-e2edc2e7f2f5",
+      "name": "Execute Workflow: Account Closure",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        400
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "value": "ACCOUNT_CLOSURE_WORKFLOW_ID",
+          "mode": "id"
+        }
+      }
+    },
+    {
+      "id": "8d0dd6be-fbe2-4a30-9ea3-87eeef922431",
+      "name": "Log Email Event (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2500,
+        100
+      ],
+      "parameters": {
+        "operation": "insert",
+        "table": "email_audit_log",
+        "columns": "thread_id,sender_email,account_id,intent,action_taken,redaction_applied"
+      },
+      "notes": "Every workflow that sends a customer email logs to email_audit_log (n8n Spec Sec. 14)."
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Verify Sender (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Sender (Postgres)": {
+      "main": [
+        [
+          {
+            "node": "Sender Registered?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sender Registered?": {
+      "main": [
+        [
+          {
+            "node": "Account Status Branch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Unregistered Sender",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Account Status Branch": {
+      "main": [
+        [
+          {
+            "node": "Execute Workflow: Account Reactivation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Password (Function)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Password (Function)": {
+      "main": [
+        [
+          {
+            "node": "Redact PII (Python service)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redact PII (Python service)": {
+      "main": [
+        [
+          {
+            "node": "Classify Intent (Groq via LangChain)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Intent (Groq via LangChain)": {
+      "main": [
+        [
+          {
+            "node": "Confidence Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confidence Check": {
+      "main": [
+        [
+          {
+            "node": "Route by Intent (Switch)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Clarification Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Intent (Switch)": {
+      "main": [
+        [
+          {
+            "node": "Execute Workflow: Transaction Execution",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Workflow: Statement Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Workflow: Support / RAG Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply: Account Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Workflow: Account Closure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Workflow: Transaction Execution": {
+      "main": [
+        [
+          {
+            "node": "Log Email Event (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Workflow: Statement Request": {
+      "main": [
+        [
+          {
+            "node": "Log Email Event (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Workflow: Support / RAG Draft": {
+      "main": [
+        [
+          {
+            "node": "Log Email Event (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply: Account Details": {
+      "main": [
+        [
+          {
+            "node": "Log Email Event (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Workflow: Account Closure": {
+      "main": [
+        [
+          {
+            "node": "Log Email Event (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Entry point of the email-driven banking system. Verifies sender (incl. multi-account disambiguation, FR-6.12), branches SUSPENDED accounts to Account Reactivation, strips the password/challenge code before any LLM call (FR-6.7), redacts PII (FR-7.1), classifies intent via Groq, and routes to the correct sub-workflow. Sub-workflows (Transaction Execution, Statement Request, Support/RAG Draft, Account Closure, Account Reactivation, Fraud Monitoring, Standing Order Scheduler, Reconciliation+Age-Trigger, Interest Accrual) must be built and imported separately, then their real workflow IDs pasted into the 'Execute Workflow' node placeholders in this file (search for *_WORKFLOW_ID)."
+  },
+  "pinData": {},
+  "versionId": "cdf60fcf-e598-432c-bb26-80eb16084dd9",
+  "id": "3717f346-bd70-4faa-a452-2ce2a3875a6f",
+  "tags": []
+}

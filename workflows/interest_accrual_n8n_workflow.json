@@ -1,0 +1,235 @@
+{
+  "name": "Interest Accrual Job \u2014 Digital Banking Backend (v1.2)",
+  "nodes": [
+    {
+      "id": "00ec8bf0-d3c8-499c-8a30-27d108762dca",
+      "name": "Cron Trigger (monthly)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "triggerAtDayOfMonth": 1,
+              "triggerAtHour": 3
+            }
+          ]
+        }
+      },
+      "notes": "Runs once per billing period, after end-of-day processing on the period's last day."
+    },
+    {
+      "id": "5b6297ed-9da8-43e4-ab98-db861aba72b9",
+      "name": "Fetch Eligible Accounts (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        250,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.id, a.interest_rate, a.balance, a.status FROM accounts a WHERE a.interest_rate > 0 AND NOT EXISTS (SELECT 1 FROM interest_accrual_log l WHERE l.account_id = a.id AND l.period = '{{$json[\"period\"]}}');"
+      },
+      "notes": "Excludes accounts that already have a log row for this period, so a re-run never double-processes."
+    },
+    {
+      "id": "d0a131cb-0da3-4a41-95f9-41565e6d2a17",
+      "name": "Check Skip Conditions (Python service)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        500,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env[\"PYTHON_SERVICES_BASE_URL\"]}}/interest/check-skip",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "account_id",
+              "value": "={{$json[\"id\"]}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Evaluates negative-balance, SUSPENDED, and CLOSED conditions as of run time \u2014 a run-time snapshot, not a historical full-period check (n8n Spec Sec. 11, TRD Sec. 5)."
+    },
+    {
+      "id": "e0ff7df4-5c00-4389-83d5-a282a3665b7b",
+      "name": "Skip Applies?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        750,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json[\"skip\"]}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "rightValue": true
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "2755e4e1-291d-4ecc-9d9e-a2417310f625",
+      "name": "Log Skip (Postgres insert)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        150
+      ],
+      "parameters": {
+        "operation": "insert",
+        "table": "interest_accrual_log",
+        "columns": "account_id,period,skipped,skip_reason"
+      },
+      "notes": "skipped = true, with the specific skip_reason (negative balance / SUSPENDED / CLOSED). No transaction is created."
+    },
+    {
+      "id": "e30d90cf-7b2d-4167-848f-9aa6649dc693",
+      "name": "Compute & Credit (Python service)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        -150
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env[\"PYTHON_SERVICES_BASE_URL\"]}}/interest/compute-and-credit",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "account_id",
+              "value": "={{$json[\"id\"]}}"
+            },
+            {
+              "name": "rate",
+              "value": "={{$json[\"interest_rate\"]}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Computes interest at the account's rate and credits it via a dedicated INTEREST transaction \u2014 n8n never computes the amount itself."
+    },
+    {
+      "id": "58423b91-ad49-4b45-8452-d6b3ec5e043f",
+      "name": "Log Accrual (Postgres insert)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        -150
+      ],
+      "parameters": {
+        "operation": "insert",
+        "table": "interest_accrual_log",
+        "columns": "account_id,period,skipped,amount_credited,transaction_id"
+      },
+      "notes": "skipped = false. Unsupervised: interest accrual crediting when no skip condition applies (n8n Spec Sec. 13)."
+    }
+  ],
+  "connections": {
+    "Cron Trigger (monthly)": {
+      "main": [
+        [
+          {
+            "node": "Fetch Eligible Accounts (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Eligible Accounts (Postgres)": {
+      "main": [
+        [
+          {
+            "node": "Check Skip Conditions (Python service)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Skip Conditions (Python service)": {
+      "main": [
+        [
+          {
+            "node": "Skip Applies?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Applies?": {
+      "main": [
+        [
+          {
+            "node": "Log Skip (Postgres insert)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compute & Credit (Python service)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute & Credit (Python service)": {
+      "main": [
+        [
+          {
+            "node": "Log Accrual (Postgres insert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Runs monthly after end-of-day processing on the period's last day. Fetches accounts with a positive interest rate that have no accrual log row for this period yet, then evaluates skip conditions (negative balance, SUSPENDED, CLOSED) at run time \u2014 not a historical full-period check. Eligible accounts are credited via a Python service as a dedicated INTEREST transaction and logged; skipped accounts are logged with a specific reason and no transaction is created."
+  },
+  "pinData": {},
+  "versionId": "01181910-d764-47c0-8d1c-e6a84ce589e7",
+  "id": "528b06ae-9242-46bc-bc8b-a91a70aed4d3",
+  "tags": []
+}

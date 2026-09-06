@@ -1,0 +1,370 @@
+{
+  "name": "Reconciliation + Age-Trigger Job \u2014 Digital Banking Backend (v1.2)",
+  "nodes": [
+    {
+      "id": "18ed053c-57b4-4783-9a21-719260332843",
+      "name": "Cron Trigger (nightly)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 2
+            }
+          ]
+        }
+      },
+      "notes": "Runs after end-of-day transaction processing completes."
+    },
+    {
+      "id": "b0b8a85f-5c0a-43e2-b800-224953bc0899",
+      "name": "Sum Ledger (Python service)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        250,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env[\"PYTHON_SERVICES_BASE_URL\"]}}/reconciliation/sum-ledger",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "options": {}
+      },
+      "notes": "SUM(amount) GROUP BY account_id from the transactions table, computed for every account."
+    },
+    {
+      "id": "d07ce071-aa21-4025-8706-3e4529032288",
+      "name": "Compare to Balance (Python service)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        500,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env[\"PYTHON_SERVICES_BASE_URL\"]}}/reconciliation/compare",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ledger_sums",
+              "value": "={{$json[\"ledger_sums\"]}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Compares the summed ledger against accounts.balance per account. Mismatches are NEVER auto-corrected \u2014 this is a flag-only job."
+    },
+    {
+      "id": "8343a3b8-baa0-4bec-820a-4d45582a4f77",
+      "name": "Mismatch Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        750,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json[\"mismatches\"].length}}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "bbbb60f8-1376-41b9-a1dc-efdf2c622216",
+      "name": "Classify Root Cause (Python service)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        -150
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env[\"PYTHON_SERVICES_BASE_URL\"]}}/reconciliation/classify",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "mismatches",
+              "value": "={{$json[\"mismatches\"]}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Flags a likely cause per mismatch: duplicate entry, rounding error, timing gap, or orphaned entry \u2014 a hint for the ops team, not an automatic fix."
+    },
+    {
+      "id": "daadfeec-c870-471a-a888-b10274adbfed",
+      "name": "Log Reconciliation Flag (Postgres insert)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        -150
+      ],
+      "parameters": {
+        "operation": "insert",
+        "table": "reconciliation_flags",
+        "columns": "account_id,discrepancy_amount,likely_cause,status"
+      },
+      "notes": "status = FLAGGED. Resolving the mismatch (correcting the ledger) always requires a human sign-off \u2014 this job only ever writes the flag (n8n Spec Sec. 13)."
+    },
+    {
+      "id": "25b6d3a5-5c85-4c76-ace2-079b1a8cdb7d",
+      "name": "Alert Ops (Gmail, internal)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        -150
+      ],
+      "parameters": {
+        "operation": "send",
+        "message": "Nightly reconciliation found one or more ledger/balance mismatches. See reconciliation_flags for account, discrepancy amount, and likely root cause."
+      },
+      "notes": "Sent to the ops team only \u2014 never to the customer."
+    },
+    {
+      "id": "c256a0dd-2184-4c86-8156-876c6f7b9477",
+      "name": "Age Check: Fetch Minors at Legal Age (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1750,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, account_id FROM account_holders WHERE holder_type = 'MINOR' AND date_of_birth <= (CURRENT_DATE - INTERVAL '18 years');"
+      },
+      "notes": "Bundled into the same nightly run as reconciliation (n8n Spec Sec. 8)."
+    },
+    {
+      "id": "d57e9402-c1fa-466d-a5f1-8b100c904f28",
+      "name": "Any Minors Reaching Age?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.length}}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "4e4b6dd6-2930-4ef1-a643-c5934df88f83",
+      "name": "Convert to Primary Holder (Postgres update)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        -150
+      ],
+      "parameters": {
+        "operation": "update",
+        "table": "account_holders",
+        "updateKey": "id",
+        "columns": "holder_type"
+      },
+      "notes": "holder_type = PRIMARY. Unsupervised: age-based conversion at legal age is a deterministic, logged action (n8n Spec Sec. 13)."
+    },
+    {
+      "id": "6c13e6dc-164d-41ab-95f2-6747afc440f8",
+      "name": "Log Conversion (Postgres insert)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2500,
+        -150
+      ],
+      "parameters": {
+        "operation": "insert",
+        "table": "email_audit_log",
+        "columns": "sender,intent,action_taken,redaction_flag,timestamp"
+      },
+      "notes": "Auditable record that this holder's access level changed, and when."
+    }
+  ],
+  "connections": {
+    "Cron Trigger (nightly)": {
+      "main": [
+        [
+          {
+            "node": "Sum Ledger (Python service)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sum Ledger (Python service)": {
+      "main": [
+        [
+          {
+            "node": "Compare to Balance (Python service)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compare to Balance (Python service)": {
+      "main": [
+        [
+          {
+            "node": "Mismatch Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mismatch Found?": {
+      "main": [
+        [
+          {
+            "node": "Classify Root Cause (Python service)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Age Check: Fetch Minors at Legal Age (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Root Cause (Python service)": {
+      "main": [
+        [
+          {
+            "node": "Log Reconciliation Flag (Postgres insert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Reconciliation Flag (Postgres insert)": {
+      "main": [
+        [
+          {
+            "node": "Alert Ops (Gmail, internal)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Ops (Gmail, internal)": {
+      "main": [
+        [
+          {
+            "node": "Age Check: Fetch Minors at Legal Age (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Age Check: Fetch Minors at Legal Age (Postgres)": {
+      "main": [
+        [
+          {
+            "node": "Any Minors Reaching Age?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Minors Reaching Age?": {
+      "main": [
+        [
+          {
+            "node": "Convert to Primary Holder (Postgres update)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Convert to Primary Holder (Postgres update)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversion (Postgres insert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Nightly cron, bundling two independent checks after end-of-day processing (n8n Spec Sec. 8). Reconciliation sums the ledger, compares it to each account's stored balance, and \u2014 on a mismatch \u2014 classifies a likely root cause and alerts the ops team only; the mismatch is flagged, never auto-corrected. Age-Trigger, in the same run, converts MINOR holders who have reached legal age to PRIMARY access, a deterministic and fully logged unsupervised action."
+  },
+  "pinData": {},
+  "versionId": "4e3d7219-336d-4e47-bff8-26e0c7b63fc3",
+  "id": "e60f373b-33a3-4519-b81a-fab71e5f7b73",
+  "tags": []
+}

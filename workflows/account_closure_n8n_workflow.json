@@ -1,0 +1,594 @@
+{
+  "name": "Account Closure \u2014 Digital Banking Backend (v1.2)",
+  "nodes": [
+    {
+      "id": "2a6f6f66-1b0a-40a2-a541-d1fbdb7cae28",
+      "name": "When Called by Router",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "account_holder_id"
+            },
+            {
+              "name": "account_id"
+            },
+            {
+              "name": "thread_id"
+            },
+            {
+              "name": "password"
+            },
+            {
+              "name": "closure_reason"
+            }
+          ]
+        }
+      },
+      "notes": "account_holder_id is the initiating holder \u2014 the one who emailed asking to close the account."
+    },
+    {
+      "id": "64257c35-7861-4c09-b9a9-7c1ffbfa74a4",
+      "name": "Execute Workflow: Account Lockout Handler",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        250,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "value": "ACCOUNT_LOCKOUT_HANDLER_WORKFLOW_ID",
+          "mode": "id"
+        }
+      },
+      "notes": "Must pass before any closure step proceeds (n8n Spec Sec. 3), regardless of how many holders the account has."
+    },
+    {
+      "id": "46807da0-fbaa-467e-b13b-ff358aa230d8",
+      "name": "Lockout Passed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        500,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json[\"match\"]}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "rightValue": true
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "f5ed87cf-3690-436f-9c7a-16f1fa2d6a71",
+      "name": "Send Rejection Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        750,
+        250
+      ],
+      "parameters": {
+        "operation": "reply",
+        "message": "Your request could not be verified. See our previous message for lockout/suspension/attempts-remaining details."
+      },
+      "notes": "Safety-net stop \u2014 the Lockout Handler already sent the specific email."
+    },
+    {
+      "id": "677364ca-2ccb-4161-ba07-89342f087c52",
+      "name": "Get Account Holders (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        750,
+        -150
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, email, phone FROM account_holders WHERE account_id = '{{$json[\"account_id\"]}}';"
+      },
+      "notes": "Fetches every holder on this account to determine EITHER_OR/JOINT/multi-holder closure path."
+    },
+    {
+      "id": "9c2b3926-04a1-4e61-b36b-cbc7dcee8715",
+      "name": "Single Holder?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        -150
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.length}}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              },
+              "rightValue": 1
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "notes": "Single-holder accounts close immediately after the standard lockout check \u2014 no consent step (n8n Spec Sec. 10)."
+    },
+    {
+      "id": "98df0b79-c235-4463-90c1-ca211f9a9781",
+      "name": "Create Closure Request (Postgres insert)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        50
+      ],
+      "parameters": {
+        "operation": "insert",
+        "table": "account_closure_requests",
+        "columns": "account_id,initiated_by,expires_at"
+      },
+      "notes": "expires_at set to the fixed decision window. Only created for multi-holder accounts."
+    },
+    {
+      "id": "dd7ca9f1-dd69-4c1a-bc68-9b84a3a51216",
+      "name": "Notify Other Holders (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        50
+      ],
+      "parameters": {
+        "operation": "send",
+        "message": "A closure request has been submitted for your joint account. Click the link to approve or reject \u2014 you will also need to confirm via a phone OTP."
+      },
+      "notes": "Sent to each holder other than the initiator; each link is tied to this closure_request id."
+    },
+    {
+      "id": "cd428c83-e2d8-4729-8f34-4a384c3a588e",
+      "name": "Wait for Holder Response (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        1750,
+        50
+      ],
+      "parameters": {
+        "path": "account-closure-response",
+        "httpMethod": "POST"
+      },
+      "notes": "Fires when a holder clicks approve/reject and submits their phone OTP."
+    },
+    {
+      "id": "19862514-1e00-4baa-94a1-08ec994ac220",
+      "name": "Verify Holder OTP (Python: /auth/verify-otp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        50
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env[\"PYTHON_SERVICES_BASE_URL\"]}}/auth/verify-otp",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "context",
+              "value": "ACCOUNT_CLOSURE"
+            },
+            {
+              "name": "reference_id",
+              "value": "={{$json[\"closure_request_id\"]}}"
+            },
+            {
+              "name": "otp",
+              "value": "={{$json[\"otp\"]}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "A holder's approval or rejection is only recorded once the phone OTP is confirmed \u2014 the email link alone is never sufficient (n8n Spec Sec. 9)."
+    },
+    {
+      "id": "08cc6af7-05e9-4cf9-9f43-2a62110c0b2d",
+      "name": "OTP Verified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        50
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json[\"verified\"]}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "rightValue": true
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "6981c81e-0da8-4267-90f3-ee2e8ae7c9e8",
+      "name": "Record Approval (Postgres update)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2500,
+        -100
+      ],
+      "parameters": {
+        "operation": "update",
+        "table": "account_closure_requests",
+        "updateKey": "id",
+        "columns": "approvals"
+      },
+      "notes": "Updates the approvals JSONB for this holder_id with their approve/reject decision, only after OTP success."
+    },
+    {
+      "id": "8c7fa37a-0cc8-4167-8464-a790821769e6",
+      "name": "Unanimity Check (IF: scheduled re-check + on response)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        2750,
+        -100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json[\"all_approved\"]}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "rightValue": true
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "notes": "Runs on each new response AND on a scheduled re-check at expires_at. Any rejection anywhere, or window expiry without full unanimity, routes to Escalate."
+    },
+    {
+      "id": "6d8650bd-b1df-4248-8a5d-09b0d945c0e8",
+      "name": "Execute Closure (Python: /accounts/close)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        3000,
+        -250
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env[\"PYTHON_SERVICES_BASE_URL\"]}}/accounts/close",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "account_id",
+              "value": "={{$json[\"account_id\"]}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Only reached on unanimous approval. Sets accounts.status = CLOSED and generates a final statement."
+    },
+    {
+      "id": "f362445b-9b2c-4753-bd29-607185c08896",
+      "name": "Send Closure Confirmation (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        3250,
+        -250
+      ],
+      "parameters": {
+        "operation": "send",
+        "message": "Your account has been closed as unanimously approved by all holders. Your final statement is attached."
+      }
+    },
+    {
+      "id": "5ae23b29-59d4-49ff-8939-52641df5dbe5",
+      "name": "Escalate to Manual Review (Postgres + Gmail internal)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        3000,
+        100
+      ],
+      "parameters": {
+        "operation": "send",
+        "message": "Account closure request unresolved: a holder rejected, or the decision window expired without unanimity. Manual review required."
+      },
+      "notes": "status = ESCALATED. Never auto-resolved either way \u2014 covers rejection and timeout alike (n8n Spec Sec. 9 / Sec. 13)."
+    },
+    {
+      "id": "3238c21b-709f-489a-89fb-c6e06f7c7448",
+      "name": "Log Email Event (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        3500,
+        -100
+      ],
+      "parameters": {
+        "operation": "insert",
+        "table": "email_audit_log",
+        "columns": "sender,intent,action_taken,redaction_flag,timestamp"
+      }
+    }
+  ],
+  "connections": {
+    "When Called by Router": {
+      "main": [
+        [
+          {
+            "node": "Execute Workflow: Account Lockout Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Workflow: Account Lockout Handler": {
+      "main": [
+        [
+          {
+            "node": "Lockout Passed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lockout Passed?": {
+      "main": [
+        [
+          {
+            "node": "Get Account Holders (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Rejection Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Account Holders (Postgres)": {
+      "main": [
+        [
+          {
+            "node": "Single Holder?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Single Holder?": {
+      "main": [
+        [
+          {
+            "node": "Execute Closure (Python: /accounts/close)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Closure Request (Postgres insert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Closure Request (Postgres insert)": {
+      "main": [
+        [
+          {
+            "node": "Notify Other Holders (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Other Holders (Gmail)": {
+      "main": [
+        [
+          {
+            "node": "Wait for Holder Response (Webhook)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Holder Response (Webhook)": {
+      "main": [
+        [
+          {
+            "node": "Verify Holder OTP (Python: /auth/verify-otp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Holder OTP (Python: /auth/verify-otp)": {
+      "main": [
+        [
+          {
+            "node": "OTP Verified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OTP Verified?": {
+      "main": [
+        [
+          {
+            "node": "Record Approval (Postgres update)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait for Holder Response (Webhook)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Approval (Postgres update)": {
+      "main": [
+        [
+          {
+            "node": "Unanimity Check (IF: scheduled re-check + on response)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unanimity Check (IF: scheduled re-check + on response)": {
+      "main": [
+        [
+          {
+            "node": "Execute Closure (Python: /accounts/close)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Escalate to Manual Review (Postgres + Gmail internal)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Closure (Python: /accounts/close)": {
+      "main": [
+        [
+          {
+            "node": "Send Closure Confirmation (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Closure Confirmation (Gmail)": {
+      "main": [
+        [
+          {
+            "node": "Log Email Event (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalate to Manual Review (Postgres + Gmail internal)": {
+      "main": [
+        [
+          {
+            "node": "Log Email Event (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Rejection Email": {
+      "main": [
+        [
+          {
+            "node": "Log Email Event (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Called from the router for an account-closure intent (n8n Spec Sec. 10). Runs the shared Account Lockout Handler first. Single-holder accounts close immediately afterward with no consent step. Multi-holder accounts require every other holder's phone-OTP-confirmed approval within a fixed decision window; any rejection or timeout escalates to manual review and is never auto-resolved either way. Execution and final statement generation happen only via Python services."
+  },
+  "pinData": {},
+  "versionId": "9407815f-fc11-4f0c-b658-dac49846b573",
+  "id": "9c753587-dc7b-46d5-ac95-cefa5222c5a8",
+  "tags": []
+}
