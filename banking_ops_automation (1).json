@@ -1,81 +1,91 @@
 {
-  "name": "Digital Banking Ops Automation \u2014 Capstone",
+  "name": "Digital Banking Ops Automation — Capstone",
   "nodes": [
     {
       "parameters": {
         "triggerTimes": {
           "item": [
             {
-              "mode": "everyDay",
-              "hour": 2,
-              "minute": 0
+              "hour": 2
             }
           ]
         }
       },
-      "id": "05d78ed3-d138-4678-b7e0-c51f8a36b410",
+      "id": "483b1ca1-5ff6-4b9d-8e65-789f14e9affb",
       "name": "Nightly Cron (2AM)",
       "type": "n8n-nodes-base.cron",
       "typeVersion": 1,
       "position": [
-        0,
-        0
+        768,
+        -2880
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT account_id, SUM(CASE WHEN type='credit' THEN amount ELSE -amount END) AS ledger_sum FROM transactions WHERE status='settled' GROUP BY account_id;"
+        "query": "SELECT account_id, SUM(CASE WHEN type='credit' THEN amount ELSE -amount END) AS ledger_sum FROM transactions WHERE status='settled' GROUP BY account_id;",
+        "additionalFields": {}
       },
-      "id": "0c6eb7af-0505-4720-8b47-7a049054c415",
+      "id": "6cfae939-8bc3-4e3b-abd0-7f9bbb9cf1e3",
       "name": "PG: Sum Ledger Per Account",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        0
-      ]
+        992,
+        -2880
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT id AS account_id, reported_balance FROM accounts;"
+        "query": "SELECT id AS account_id, reported_balance FROM accounts;",
+        "additionalFields": {}
       },
-      "id": "34174082-1bde-4e8e-8127-c11e463d4708",
+      "id": "48e49a77-caf4-4613-b0c0-dc3e9aab8bb6",
       "name": "PG: Get Reported Balances",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        150
-      ]
+        992,
+        -2736
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "mode": "combine",
-        "combineBy": "combineByField",
-        "fieldsToMatchString": "account_id"
+        "mode": "combine"
       },
-      "id": "58cef77e-cfff-4a78-8a18-f7a4f81bef44",
+      "id": "4afa87cc-ca61-4dab-92c0-2880fe937ae4",
       "name": "Merge Ledger vs Reported",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 1,
       "position": [
-        440,
-        75
+        1216,
+        -2800
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Flag any account the Python /reconciliation-check service reports as mismatched.\n// The HTTP node already sent {account_id, ledger_sum, reported_balance} and received\n// back {account_id, mismatch, difference} \u2014 filter on the service's verdict.\nreturn items.filter(i => i.json.mismatch === true);"
+        "jsCode": "// Flag any account the Python /reconciliation-check service reports as mismatched.\n// The HTTP node already sent {account_id, ledger_sum, reported_balance} and received\n// back {account_id, mismatch, difference} — filter on the service's verdict.\nreturn items.filter(i => i.json.mismatch === true);"
       },
-      "id": "4be1bca9-24b7-4fb1-990b-b1922bd356ff",
+      "id": "e8a87189-4cad-42a8-ab28-c5ca22f9880f",
       "name": "Code: Detect Mismatches",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        880,
-        75
+        1648,
+        -2800
       ]
     },
     {
@@ -84,68 +94,80 @@
           "number": [
             {
               "value1": "={{$json.length}}",
-              "operation": "notEqual",
-              "value2": 0
+              "operation": "notEqual"
             }
           ]
         }
       },
-      "id": "5f3d0bb2-08eb-4374-b3e0-bac4baf45d09",
+      "id": "5731e3b6-face-4181-840e-cf8c9cf74cc1",
       "name": "If Mismatches Found",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        1100,
-        75
+        1872,
+        -2800
       ]
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "audit_log",
         "columns": "event_type, account_id, details, created_at",
         "additionalFields": {}
       },
-      "id": "2ea7e1c2-da62-425c-a155-ae75c34d7c89",
+      "id": "cef491e2-d317-437b-b7c3-535d6e2f4a87",
       "name": "PG: Insert Audit (Mismatch)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1320,
-        0
-      ]
+        2096,
+        -2880
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "ops-team@bank.internal",
-        "subject": "Nightly Reconciliation: {{$json.length}} mismatches found",
-        "message": "Ledger vs reported balance mismatch detected for the accounts listed. Manual review required before next business day."
+        "operation": "send"
       },
-      "id": "9e27559e-05da-4539-bde0-b594fb8674ad",
+      "id": "0694410b-da7b-404f-9e21-94484561fbf4",
       "name": "Gmail: Alert Ops (Reconciliation)",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        1540,
-        0
-      ]
+        2320,
+        -2880
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "audit_log",
         "columns": "event_type, details, created_at",
         "additionalFields": {}
       },
-      "id": "e7864921-8c33-4da9-900c-e762d8f858fa",
+      "id": "d3c8358b-16f8-49d1-bdf7-b24f40fa307e",
       "name": "PG: Insert Audit (Clean)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1320,
-        150
-      ]
+        2096,
+        -2736
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -157,55 +179,69 @@
           ]
         }
       },
-      "id": "f6b20745-3181-4864-bb97-ff178cbc7e7f",
+      "id": "7fd6b6a3-35ab-4e64-8bc9-02e2a9c1c8c2",
       "name": "Hourly Cron (Standing Orders)",
       "type": "n8n-nodes-base.cron",
       "typeVersion": 1,
       "position": [
-        0,
-        350
+        768,
+        -2528
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT * FROM standing_orders WHERE next_run_date <= NOW() AND status = 'active' FOR UPDATE SKIP LOCKED;"
+        "query": "SELECT * FROM standing_orders WHERE next_run_date <= NOW() AND status = 'active' FOR UPDATE SKIP LOCKED;",
+        "additionalFields": {}
       },
-      "id": "7c21a2ec-4894-40aa-8ef6-73ff9a84f0f7",
+      "id": "37e4b2a1-70da-4908-87ce-51d03003d470",
       "name": "PG: Get Due Standing Orders",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        350
-      ]
+        992,
+        -2528
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "jsCode": "// Rule: if scheduled date falls on weekend/holiday, process EARLY (previous business day)\n// so payees are never left waiting. Mark item with adjusted_run flag for audit.\nreturn items.map(i => {\n  const d = new Date(i.json.next_run_date);\n  const day = d.getDay();\n  i.json.is_weekend_or_holiday = (day === 0 || day === 6);\n  return i;\n});"
       },
-      "id": "8d386e66-bbfc-4ba5-a93c-f859428f3a52",
+      "id": "a53393c6-8507-4032-a801-79afe569ff49",
       "name": "Code: Weekend/Holiday Adjust",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        440,
-        350
+        1216,
+        -2528
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT balance FROM accounts WHERE id = '{{$json.account_id}}' FOR UPDATE;"
+        "query": "SELECT balance FROM accounts WHERE id = '{{$json.account_id}}' FOR UPDATE;",
+        "additionalFields": {}
       },
-      "id": "88d93d88-ec7c-446d-ba63-1bd4e976eb59",
+      "id": "82774021-d2b7-43cd-b31b-4573adf43fc5",
       "name": "PG: Lock & Check Balance",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        660,
-        350
-      ]
+        1440,
+        -2528
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -219,43 +255,56 @@
           ]
         }
       },
-      "id": "9295dbff-e237-4dd4-94ae-01942e8c7c6f",
+      "id": "2a2df8a5-40e0-413c-9c3b-ac713a6f7a5c",
       "name": "If Sufficient Funds",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        880,
-        350
+        1648,
+        -2528
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO transactions (idempotency_key, account_id, amount, type, status) VALUES ('{{$json.standing_order_id}}-{{$json.next_run_date}}', '{{$json.account_id}}', {{$json.amount}}, 'debit', 'settled') ON CONFLICT (idempotency_key) DO NOTHING;"
+        "query": "INSERT INTO transactions (idempotency_key, account_id, amount, type, status) VALUES ('{{$json.standing_order_id}}-{{$json.next_run_date}}', '{{$json.account_id}}', {{$json.amount}}, 'debit', 'settled') ON CONFLICT (idempotency_key) DO NOTHING;",
+        "additionalFields": {}
       },
-      "id": "b3a3dca2-1631-43e2-a103-d72fdef8c268",
+      "id": "5503f5b9-1c3e-4428-8fe9-d11992810cb7",
       "name": "PG: Execute Transfer (Idempotent)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1100,
-        280
-      ]
+        1872,
+        -2592
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "update",
         "table": "standing_orders",
-        "updateKey": "id"
+        "additionalFields": {}
       },
-      "id": "91060b9c-311d-4fdd-8095-94d9da46959d",
+      "id": "330896b9-3cd8-4527-97ec-ee423f5ee3f1",
       "name": "PG: Advance Next Run Date",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1320,
-        280
-      ]
+        2096,
+        -2592
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -263,142 +312,175 @@
           "number": [
             {
               "value1": "={{$json.retry_count}}",
-              "operation": "smaller",
               "value2": 3
             }
           ]
         }
       },
-      "id": "724cebd3-2df5-4ed1-ad28-85798df3891e",
+      "id": "97954d6a-2daf-4ce8-aa35-82f3ed2b9e26",
       "name": "If Retry Count < 3",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        1100,
-        420
+        1872,
+        -2464
       ]
     },
     {
       "parameters": {
         "operation": "update",
         "table": "standing_orders",
-        "updateKey": "id",
-        "columns": "retry_count, next_run_date"
+        "columns": "retry_count, next_run_date",
+        "additionalFields": {}
       },
-      "id": "8c753251-1060-4b90-8edf-8f6281bf03fa",
+      "id": "585fa3c1-2954-44ce-851b-2e2da99a73eb",
       "name": "PG: Schedule Next-Day Retry",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1320,
-        380
-      ]
+        2096,
+        -2496
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "update",
         "table": "standing_orders",
-        "updateKey": "id",
-        "columns": "status"
+        "columns": "status",
+        "additionalFields": {}
       },
-      "id": "2b2e0c22-1cb5-4f0c-aef9-752dd6a5378c",
+      "id": "ff45d195-d4cc-4711-96ae-805d3b2bf2c0",
       "name": "PG: Mark Permanently Failed",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1320,
-        480
-      ]
+        2096,
+        -2400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.customer_email}}",
-        "subject": "Standing order could not be completed",
-        "message": "Your standing order to {{$json.payee_name}} failed after 3 attempts due to insufficient funds and has been cancelled. Please review your account balance."
+        "operation": "send"
       },
-      "id": "058727a4-8619-4716-b323-f71dbe6165de",
+      "id": "207fb75e-3ebd-47b0-95b9-ea587943008d",
       "name": "Gmail: Notify Permanent Failure",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        1540,
-        480
-      ]
+        2320,
+        -2400
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
+        "httpMethod": "POST",
         "path": "fraud-flag",
-        "httpMethod": "POST"
+        "options": {}
       },
-      "id": "c26c17cd-2c66-49d5-9e39-eb47ef9d1a43",
+      "id": "57aa3204-1a2c-412b-94dc-6299c411fefa",
       "name": "Webhook: Fraud Score Event",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        0,
-        650
-      ]
+        768,
+        -2224
+      ],
+      "webhookId": "513b19f7-ad02-4c5f-94d0-21dde9452031"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "BEGIN; INSERT INTO fraud_flags (account_id, transaction_id, score, reason, created_at) VALUES ('{{$json.account_id}}', '{{$json.transaction_id}}', {{$json.score}}, '{{$json.reason}}', NOW()); UPDATE accounts SET on_hold = true WHERE id = '{{$json.account_id}}'; COMMIT;"
+        "query": "BEGIN; INSERT INTO fraud_flags (account_id, transaction_id, score, reason, created_at) VALUES ('{{$json.account_id}}', '{{$json.transaction_id}}', {{$json.score}}, '{{$json.reason}}', NOW()); UPDATE accounts SET on_hold = true WHERE id = '{{$json.account_id}}'; COMMIT;",
+        "additionalFields": {}
       },
-      "id": "dc3277f1-c896-46e2-844a-5ababc70273a",
+      "id": "f956e457-6dff-412a-92b5-376f0c971d90",
       "name": "PG: Insert Fraud Flag + Hold",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        650
-      ]
+        992,
+        -2224
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "approval_queue",
         "columns": "type, account_id, payload, status",
         "additionalFields": {}
       },
-      "id": "9d74e4d3-5408-411b-b99f-9e99739a23eb",
+      "id": "3d3d5313-9bda-4b22-bc1e-ee439200315b",
       "name": "PG: Insert Approval Queue Item",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        440,
-        650
-      ]
+        1216,
+        -2224
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.customer_email}}",
-        "subject": "A recent transaction has been placed on hold",
-        "message": "We flagged a transaction on your account for review. If this was a legitimate purchase, reply to this email or use the link below to confirm and release the hold. Our team will review within 24 hours."
+        "operation": "send"
       },
-      "id": "0a5730f8-4d70-4e52-810d-bf36d3667ea7",
+      "id": "e6d42519-bfe3-4622-8fc2-1d06d2745ebf",
       "name": "Gmail: Notify Customer of Hold",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        660,
-        650
-      ]
+        1440,
+        -2224
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
+        "httpMethod": "POST",
         "path": "fraud-decision",
-        "httpMethod": "POST"
+        "options": {}
       },
-      "id": "b1aa10ac-ce9f-4cc3-bb9c-8d4fe4df1167",
+      "id": "65d01dca-4e10-4955-8e81-c28791947979",
       "name": "Webhook: Ops Fraud Decision",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        880,
-        650
-      ]
+        1648,
+        -2224
+      ],
+      "webhookId": "8f2d0a9b-1710-447c-89ce-4bccd9cdf556"
     },
     {
       "parameters": {
@@ -411,49 +493,68 @@
           ]
         }
       },
-      "id": "1b199293-4eaf-4d44-91b8-c04037800017",
+      "id": "abb16a73-2fad-478f-abe5-2926b7e43f31",
       "name": "If Ops Approved Release",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        1100,
-        650
+        1872,
+        -2224
       ]
     },
     {
       "parameters": {
         "operation": "update",
         "table": "accounts",
-        "updateKey": "id",
-        "columns": "on_hold"
+        "columns": "on_hold",
+        "additionalFields": {}
       },
-      "id": "b479e28b-ef92-4b0d-993b-2ea1a1910b6c",
+      "id": "01087d86-69f1-400a-8e4a-918408e6cbce",
       "name": "PG: Release Hold (False Positive)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1320,
-        600
-      ]
+        2096,
+        -2272
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "update",
         "table": "fraud_flags",
-        "updateKey": "id",
-        "columns": "status"
+        "columns": "status",
+        "additionalFields": {}
       },
-      "id": "d5b62cd3-91b3-41fe-a87a-4e19859086ed",
+      "id": "9699d66c-4f9d-4ba5-9423-f270e29b23c3",
       "name": "PG: Confirm Fraud (Keep Hold)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1320,
-        700
-      ]
+        2096,
+        -2176
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
         "filters": {
           "labelIds": [
             "INBOX"
@@ -461,27 +562,30 @@
           "q": "to:support@bank.internal"
         }
       },
-      "id": "fd623131-3b5f-499e-9f41-64b568960e3c",
+      "id": "3324bdb3-d17e-47a7-bf69-1db79c768a16",
       "name": "Gmail Trigger: New Support Email",
       "type": "n8n-nodes-base.gmailTrigger",
       "typeVersion": 1,
       "position": [
-        0,
-        950
-      ]
+        768,
+        -1936
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
-      "parameters": {
-        "promptType": "define",
-        "text": "Classify this customer email into exactly one category: CARD_DECLINE, FRAUD_DISPUTE, JOINT_ACCOUNT, STANDING_ORDER, GENERAL_QUERY. Reply with only the category name.\n\nEmail: {{$json.text}}"
-      },
-      "id": "d5460a38-1a7a-458a-a3dd-02bd9a041f96",
+      "parameters": {},
+      "id": "8a03a41b-d013-418c-ba78-d47e23f30cb9",
       "name": "Groq: Classify Intent",
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1,
       "position": [
-        220,
-        950
+        992,
+        -1936
       ]
     },
     {
@@ -491,69 +595,84 @@
           "temperature": 0
         }
       },
-      "id": "f925221c-302b-4738-bdd9-09412f3509a3",
+      "id": "d4e0d207-0cf7-491f-bd60-4330e5cc198f",
       "name": "Groq Chat Model (Classify)",
       "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
       "typeVersion": 1,
       "position": [
-        220,
-        1080
-      ]
+        992,
+        -1792
+      ],
+      "credentials": {
+        "groqApi": {
+          "id": "IifE83DA3lNEuo9C",
+          "name": "Groq account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT a.*, t.* FROM accounts a LEFT JOIN transactions t ON t.account_id = a.id WHERE a.email = '{{$json.from}}' ORDER BY t.created_at DESC LIMIT 20;"
+        "query": "SELECT a.*, t.* FROM accounts a LEFT JOIN transactions t ON t.account_id = a.id WHERE a.email = '{{$json.from}}' ORDER BY t.created_at DESC LIMIT 20;",
+        "additionalFields": {}
       },
-      "id": "48aa9f30-2865-4cb3-8377-52146a19deac",
+      "id": "2a75546d-3662-457e-b84a-48cd0f5e5d78",
       "name": "PG: Pull Account + History",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        440,
-        950
-      ]
+        1216,
+        -1936
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "mode": "retrieve",
         "pineconeIndex": "bank-policy-fraud-index",
-        "topK": 5
+        "options": {}
       },
-      "id": "359d2f4b-f4f2-4c43-a092-eedd4d784704",
+      "id": "6bbb1054-39ef-46bd-a61c-40a9945a03b4",
       "name": "Pinecone: Policy + Fraud-Pattern Search",
       "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
       "typeVersion": 1,
       "position": [
-        660,
-        950
-      ]
+        1440,
+        -1936
+      ],
+      "credentials": {
+        "pineconeApi": {
+          "id": "JE89xBkS5UVoY1Qj",
+          "name": "Pinecone account"
+        }
+      }
     },
     {
       "parameters": {
         "jsCode": "// Safeguard: discard any retrieved match with score < 0.75 so Pinecone\n// never lets a superficially-similar-but-wrong past case leak into drafting.\nreturn items.filter(i => (i.json.score || 0) >= 0.75);"
       },
-      "id": "0979d20d-2481-47ee-b012-28dc0fc617d0",
+      "id": "63eff805-4c8c-4ba9-bbee-7506d945e3f9",
       "name": "Code: Similarity Threshold Guard",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        880,
-        950
+        1648,
+        -1936
       ]
     },
     {
-      "parameters": {
-        "promptType": "define",
-        "text": "You are a banking support assistant. Using ONLY the policy context and account history provided, draft a reply. Cite the policy_id you used. If the context does not contain a clear answer, respond with exactly: NO_CONFIDENT_ANSWER \u2014 do not guess or invent policy.\n\nCustomer email: {{$json.text}}\nAccount context: {{$json.accountContext}}\nPolicy context: {{$json.policyContext}}"
-      },
-      "id": "b98cd23a-5332-4ba2-aad5-8c88aee5612b",
+      "parameters": {},
+      "id": "4d7b2c26-de9a-4625-bb45-6428f5d3780f",
       "name": "Groq: Draft Response (Grounded)",
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1,
       "position": [
-        1320,
-        950
+        2096,
+        -1936
       ]
     },
     {
@@ -563,73 +682,89 @@
           "temperature": 0.2
         }
       },
-      "id": "5a6e4017-9938-450d-a79d-b4f6e5185085",
+      "id": "d9ba8e56-f2a2-4c6c-96df-99d69fae9e37",
       "name": "Groq Chat Model (Draft)",
       "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
       "typeVersion": 1,
       "position": [
-        1100,
-        1080
-      ]
+        1872,
+        -1792
+      ],
+      "credentials": {
+        "groqApi": {
+          "id": "IifE83DA3lNEuo9C",
+          "name": "Groq account"
+        }
+      }
     },
     {
       "parameters": {
         "jsCode": "// Force human path if: no policy_id cited, response == NO_CONFIDENT_ANSWER,\n// intent is FRAUD_DISPUTE/JOINT_ACCOUNT, or account is on_hold.\nconst text = $json.output || '';\nconst needsHuman = text.includes('NO_CONFIDENT_ANSWER') || !/policy_id/i.test(text) || $json.intent === 'FRAUD_DISPUTE' || $json.intent === 'JOINT_ACCOUNT' || $json.on_hold === true;\nreturn [{ json: { ...$json, needsHuman } }];"
       },
-      "id": "0c22442d-ebe5-446f-bf1c-10ee658e4aec",
+      "id": "3a2ad0d7-a8c3-46ec-875a-98f2d71f840a",
       "name": "Code: Hallucination Guardrail Check",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        1540,
-        950
+        2320,
+        -1936
       ]
     },
     {
       "parameters": {
-        "operation": "createDraft",
-        "to": "={{$json.from}}",
-        "subject": "Re: {{$json.subject}}",
-        "message": "={{$json.output}}"
+        "operation": "createDraft"
       },
-      "id": "d20181c9-4132-43d1-b9c0-46008e8af8df",
+      "id": "3c347431-ceac-4471-a917-ab06e8c25272",
       "name": "Gmail: Create Draft (Never Auto-Send)",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        1760,
-        950
-      ]
+        2528,
+        -1936
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "approval_queue",
         "columns": "type, draft_id, account_id, needs_human, status",
         "additionalFields": {}
       },
-      "id": "5d0767e8-853f-4348-bbe4-f39428a71557",
+      "id": "7e951434-2896-473a-a3d1-c82155941233",
       "name": "PG: Insert Into Approval Queue",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1980,
-        950
-      ]
+        2752,
+        -1936
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
+        "httpMethod": "POST",
         "path": "support-draft-decision",
-        "httpMethod": "POST"
+        "options": {}
       },
-      "id": "7290b23b-4397-44eb-9e81-fc51fae4e6e7",
+      "id": "4d1eb44f-18e3-4dd5-aac0-2eb2b9ccb323",
       "name": "Webhook: Human Approval Decision",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        1980,
-        950
-      ]
+        2752,
+        -1936
+      ],
+      "webhookId": "6d8a1c89-fc5a-44bc-8ffb-004876c0bb41"
     },
     {
       "parameters": {
@@ -642,90 +777,112 @@
           ]
         }
       },
-      "id": "51301f10-a807-450d-a1d6-661e4ca8517d",
+      "id": "ecf4bcfa-4fab-4a2c-aa9d-19ab24f13b13",
       "name": "If Human Approved Send",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        2200,
-        950
+        2976,
+        -1936
       ]
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.from}}",
-        "subject": "Re: {{$json.subject}}",
-        "message": "={{$json.finalText}}"
+        "operation": "send"
       },
-      "id": "18f1b912-703b-4b2c-9686-7cba4049074f",
+      "id": "589cae09-e262-4b6b-a810-93ddf07a5c42",
       "name": "Gmail: Send Approved Reply",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        2420,
-        900
-      ]
+        3200,
+        -1984
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "audit_log",
         "columns": "event_type, account_id, details, created_at",
         "additionalFields": {}
       },
-      "id": "752926fc-2afe-43ad-bfe8-fb835575a226",
+      "id": "7d4214b5-dac1-4eaf-a71e-d7660883fbc0",
       "name": "PG: Log Sent Reply (Audit)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        2640,
-        900
-      ]
+        3408,
+        -1984
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "audit_log",
         "columns": "event_type, account_id, details, created_at",
         "additionalFields": {}
       },
-      "id": "d9cda431-b395-4281-b7b4-8f6b7df6da6c",
+      "id": "e04f5d74-9f3e-435a-a942-1efdc1ce77b4",
       "name": "PG: Log Rejected Draft (Audit)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        2420,
-        1020
-      ]
+        3200,
+        -1856
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
+        "httpMethod": "POST",
         "path": "joint-action-request",
-        "httpMethod": "POST"
+        "options": {}
       },
-      "id": "7218ea69-0ecf-4afe-ba72-f1d132208bc5",
+      "id": "fe0f7289-941d-475a-a483-4154a8fb235e",
       "name": "Webhook: Joint Account Action Request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        0,
-        1300
-      ]
+        768,
+        -1584
+      ],
+      "webhookId": "026e1499-b0e2-45c9-b0cb-7fb14768c1a7"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT a.id AS account_id, a.type, a.authority_model, a.on_hold, h.user_id, h.role FROM accounts a JOIN account_holders h ON h.account_id = a.id WHERE a.id = '{{$json.account_id}}';"
+        "query": "SELECT a.id AS account_id, a.type, a.authority_model, a.on_hold, h.user_id, h.role FROM accounts a JOIN account_holders h ON h.account_id = a.id WHERE a.id = '{{$json.account_id}}';",
+        "additionalFields": {}
       },
-      "id": "88d4c405-119c-456b-8c80-d36bbc0b9fe7",
+      "id": "55e9da17-975d-46f2-8c4c-db57213657f3",
       "name": "PG: Get Account + Holders + Authority Model",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        1300
-      ]
+        992,
+        -1584
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -734,8 +891,7 @@
         "rules": {
           "rules": [
             {
-              "value2": "transfer",
-              "output": 0
+              "value2": "transfer"
             },
             {
               "value2": "remove_holder",
@@ -748,13 +904,13 @@
           ]
         }
       },
-      "id": "d967c310-25b6-421f-95e3-5fc0761fee8e",
+      "id": "5d9e81da-80ff-4b49-a80a-fc73f1ce79de",
       "name": "Switch: Action Type",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 1,
       "position": [
-        440,
-        1300
+        1216,
+        -1584
       ]
     },
     {
@@ -763,69 +919,90 @@
           "string": [
             {
               "value1": "={{$json.authority_model}}",
-              "operation": "equal",
               "value2": "both_signature"
             }
           ]
         }
       },
-      "id": "6ffb8c75-6227-46cd-a4fd-d69b76ad4b69",
+      "id": "460b959e-f324-452f-84f1-6b49ddef3850",
       "name": "If Authority Model = Both-Signature",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        660,
-        1200
+        1440,
+        -1680
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO transactions (idempotency_key, account_id, amount, type, status) VALUES ('{{$json.request_id}}', '{{$json.account_id}}', {{$json.amount}}, '{{$json.direction}}', 'settled') ON CONFLICT (idempotency_key) DO NOTHING;"
+        "query": "INSERT INTO transactions (idempotency_key, account_id, amount, type, status) VALUES ('{{$json.request_id}}', '{{$json.account_id}}', {{$json.amount}}, '{{$json.direction}}', 'settled') ON CONFLICT (idempotency_key) DO NOTHING;",
+        "additionalFields": {}
       },
-      "id": "1dec4882-4c89-49af-a345-a0538512b315",
+      "id": "94cf4e98-e57d-4a90-914a-a89849e7b4ed",
       "name": "PG: Execute Transfer (Either-Or, Immediate)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        880,
-        1150
-      ]
+        1648,
+        -1728
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "approval_queue",
         "columns": "type, account_id, payload, status",
         "additionalFields": {}
       },
-      "id": "286e6dee-b988-482b-9e12-d1eb0962803b",
+      "id": "0349b836-6a21-4f5b-a159-955756a22fbf",
       "name": "PG: Insert Pending Co-Sign Request",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        880,
-        1250
-      ]
+        1648,
+        -1632
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.other_holder_email}}",
-        "subject": "Your co-signature is needed to approve a transaction",
-        "message": "A joint-account transaction of {{$json.amount}} requires your confirmation because this account uses both-signature authority. Please approve or decline via the link below."
+        "operation": "send"
       },
-      "id": "c2c54400-4249-47ae-a4d1-1374ba95eb6c",
+      "id": "ff45c0f2-b03a-4692-ab06-824bfb3bd245",
       "name": "Gmail: Request Co-Signature From Other Holder",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        1100,
-        1250
-      ]
+        1872,
+        -1632
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
         "filters": {
           "labelIds": [
             "INBOX"
@@ -833,14 +1010,20 @@
           "q": "subject:(Re: Your co-signature is needed)"
         }
       },
-      "id": "e7438c53-0cbc-4918-abe8-0c7d0e390534",
+      "id": "41073b51-dfd2-47a7-85bc-88695fbed9ad",
       "name": "Gmail Trigger: Co-Signature Response",
       "type": "n8n-nodes-base.gmailTrigger",
       "typeVersion": 1,
       "position": [
-        1320,
-        1250
-      ]
+        2096,
+        -1632
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
@@ -853,92 +1036,119 @@
           ]
         }
       },
-      "id": "7ee85518-ce8a-425c-8069-0b5b72b0f1ac",
+      "id": "32e16bd5-e0d4-400f-9a99-a6458169ced3",
       "name": "If Co-Signed = Approved",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        1540,
-        1250
+        2320,
+        -1632
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO transactions (idempotency_key, account_id, amount, type, status) VALUES ('{{$json.request_id}}', '{{$json.account_id}}', {{$json.amount}}, '{{$json.direction}}', 'settled') ON CONFLICT (idempotency_key) DO NOTHING;"
+        "query": "INSERT INTO transactions (idempotency_key, account_id, amount, type, status) VALUES ('{{$json.request_id}}', '{{$json.account_id}}', {{$json.amount}}, '{{$json.direction}}', 'settled') ON CONFLICT (idempotency_key) DO NOTHING;",
+        "additionalFields": {}
       },
-      "id": "6cdb798e-4038-451f-8a36-32b831c60326",
+      "id": "37b8483c-fa05-4195-9578-3a7f05d5a319",
       "name": "PG: Execute Transfer (Co-Signed)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1760,
-        1200
-      ]
+        2528,
+        -1680
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "audit_log",
         "columns": "event_type, account_id, details, created_at",
         "additionalFields": {}
       },
-      "id": "c46a3893-a031-4923-bd95-ff60703834c0",
+      "id": "8b99da69-d4d8-48e9-bc66-f88973487e16",
       "name": "PG: Log Co-Sign Declined (Audit)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1760,
-        1300
-      ]
+        2528,
+        -1584
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "jsCode": "// 2 holders -> mutual consent means BOTH must approve (threshold = total_other_holders)\n// 3+ holders -> majority vote means threshold = floor(total_other_holders/2) + 1\nconst totalOther = $json.holder_count - 1;\nconst threshold = $json.holder_count <= 2 ? totalOther : Math.floor(totalOther / 2) + 1;\nreturn [{ json: { ...$json, votes_required: threshold } }];"
       },
-      "id": "e87eca31-3fb8-4dd1-98fe-8f9e7b61e66a",
+      "id": "d46b46cd-b0d3-47a4-87ba-4499936aea89",
       "name": "Code: Count Holders & Votes Needed",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        660,
-        1350
+        1440,
+        -1536
       ]
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "approval_queue",
         "columns": "type, account_id, payload, status",
         "additionalFields": {}
       },
-      "id": "4bc6aac0-27e1-44ad-8f35-e9e0e0205cc0",
+      "id": "ebf5f394-08cb-48f0-8f55-e4c52e9e1080",
       "name": "PG: Insert Holder Removal Vote Request",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        880,
-        1350
-      ]
+        1648,
+        -1536
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.other_holder_emails}}",
-        "subject": "Your approval is needed: holder removal request",
-        "message": "A request has been made to remove a holder from your joint account. Your vote is required before this takes effect."
+        "operation": "send"
       },
-      "id": "dbbaaaee-115f-4ef4-8779-3a8327980f7c",
+      "id": "e339fcc8-fa68-41d1-95f7-6525f006648f",
       "name": "Gmail: Notify Other Holders To Vote",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        1100,
-        1350
-      ]
+        1872,
+        -1536
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
         "filters": {
           "labelIds": [
             "INBOX"
@@ -946,26 +1156,32 @@
           "q": "subject:(Your approval is needed: holder removal request)"
         }
       },
-      "id": "83e370a1-ae98-44d5-8b5b-c0e0acb43ee1",
+      "id": "c6cd2461-fe22-4c0c-8f78-9b750fde6558",
       "name": "Gmail Trigger: Holder Vote Received",
       "type": "n8n-nodes-base.gmailTrigger",
       "typeVersion": 1,
       "position": [
-        1320,
-        1350
-      ]
+        2096,
+        -1536
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
         "jsCode": "return [{ json: { ...$json, quorum_reached: $json.approve_votes >= $json.votes_required } }];"
       },
-      "id": "2618bc06-0a4e-4f7a-8f0f-f3e927f23435",
+      "id": "8015a669-88eb-4c5a-a6f0-7e9f6fe11003",
       "name": "Code: Tally Votes vs Threshold",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        1540,
-        1350
+        2320,
+        -1536
       ]
     },
     {
@@ -979,42 +1195,56 @@
           ]
         }
       },
-      "id": "209081a3-88d2-4709-b3b5-532ca188c2f1",
+      "id": "ff2ed954-9497-4e7d-99a1-cabff34e63f6",
       "name": "If Quorum Reached",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        1760,
-        1350
+        2528,
+        -1536
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "DELETE FROM account_holders WHERE account_id = '{{$json.account_id}}' AND user_id = '{{$json.target_holder_id}}';"
+        "query": "DELETE FROM account_holders WHERE account_id = '{{$json.account_id}}' AND user_id = '{{$json.target_holder_id}}';",
+        "additionalFields": {}
       },
-      "id": "530301e4-7f94-43ff-ba77-e442db39eaf6",
+      "id": "aebfafa8-5412-41be-80e8-d5319551d3bc",
       "name": "PG: Remove Holder (Quorum Met)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1980,
-        1300
-      ]
+        2752,
+        -1584
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT approve_count, holder_count FROM approval_queue WHERE account_id = '{{$json.account_id}}' AND type = 'close_account' ORDER BY created_at DESC LIMIT 1;"
+        "query": "SELECT approve_count, holder_count FROM approval_queue WHERE account_id = '{{$json.account_id}}' AND type = 'close_account' ORDER BY created_at DESC LIMIT 1;",
+        "additionalFields": {}
       },
-      "id": "f02bee07-9552-4bd6-97c8-d37a823bca89",
+      "id": "327976f9-e956-4bb1-9efd-ccf0f44a2dd6",
       "name": "PG: Get Closure Votes",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        660,
-        1450
-      ]
+        1440,
+        -1424
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -1028,92 +1258,114 @@
           ]
         }
       },
-      "id": "ed5b2841-8a96-4ae4-8713-b1264773c82c",
+      "id": "ff05b7a4-8ecc-4818-8a3d-e88a4803e8ca",
       "name": "If All Holders Agree To Close",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        880,
-        1450
+        1648,
+        -1424
       ]
     },
     {
       "parameters": {
         "operation": "update",
         "table": "accounts",
-        "updateKey": "id",
-        "columns": "status"
+        "columns": "status",
+        "additionalFields": {}
       },
-      "id": "70b99064-1985-41e5-9b68-6fae615b2d7d",
+      "id": "ff9f7a4e-4ce6-4f77-b7ea-fa9d9dd75363",
       "name": "PG: Close Account (Unanimous)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1100,
-        1400
-      ]
+        1872,
+        -1472
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "update",
         "table": "accounts",
-        "updateKey": "id",
-        "columns": "frozen"
+        "columns": "frozen",
+        "additionalFields": {}
       },
-      "id": "f647890a-0a50-4cc9-a98a-27f6c0a4f981",
+      "id": "0fdb371c-2449-4050-b855-09d3423c640e",
       "name": "PG: Freeze Account (Disagreement)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1100,
-        1500
-      ]
+        1872,
+        -1376
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.all_holder_emails}}",
-        "subject": "Account frozen pending closure agreement",
-        "message": "Holders disagree on closing this account, so no new transactions will be processed until you reach mutual agreement or escalate to ops for arbitration."
+        "operation": "send"
       },
-      "id": "c692b488-5981-4afd-9ebd-abe7ae6a11b0",
-      "name": "Gmail: Notify Holders \u2014 Account Frozen",
+      "id": "3c8ea7c0-7170-46b1-a2e1-8108a91b154e",
+      "name": "Gmail: Notify Holders — Account Frozen",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        1320,
-        1500
-      ]
+        2096,
+        -1376
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
+        "httpMethod": "POST",
         "path": "dispute-opened",
-        "httpMethod": "POST"
+        "options": {}
       },
-      "id": "b97bc40e-7d88-45c2-91d7-dda607ae1f10",
+      "id": "2d9a20f2-ce3c-4cfe-b0a9-a0e4384d5577",
       "name": "Webhook: Dispute Opened",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        0,
-        1650
-      ]
+        768,
+        -1232
+      ],
+      "webhookId": "f06ac4c2-094e-4278-bc7e-9a42a9cd1c11"
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "disputes",
         "columns": "account_id, transaction_id, opened_by, requires_all_holders, resolution_status",
         "additionalFields": {}
       },
-      "id": "db7c653b-222f-4520-915d-1d3394eea887",
+      "id": "7ea93233-02b3-4abf-b55f-c69ce4848bd4",
       "name": "PG: Insert Dispute Record",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        1650
-      ]
+        992,
+        -1232
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -1126,33 +1378,43 @@
           ]
         }
       },
-      "id": "4a218351-050e-494b-95ea-30ae478034ee",
+      "id": "482defe2-1ab0-40a4-baa4-2f42f1c526f0",
       "name": "If Account Is Joint",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        440,
-        1650
+        1216,
+        -1232
       ]
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.all_holder_emails}}",
-        "subject": "Your input is needed on a dispute",
-        "message": "A dispute has been opened on your joint account. Because resolution affects shared funds, we need input from every holder before it can be finalized."
+        "operation": "send"
       },
-      "id": "ffad6181-47a6-44d7-b24b-4ec61cb185cb",
+      "id": "1101f73c-aa3d-4bbf-9a4b-3d7a63c54cdb",
       "name": "Gmail: Request Input From All Holders",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        660,
-        1600
-      ]
+        1440,
+        -1280
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
         "filters": {
           "labelIds": [
             "INBOX"
@@ -1160,26 +1422,32 @@
           "q": "subject:(Your input is needed on a dispute)"
         }
       },
-      "id": "bf55bdfe-e4f4-4eb7-86b5-f4165a9aab4a",
+      "id": "ee60fdfd-bd78-44a7-8f28-a3c9ae90068d",
       "name": "Gmail Trigger: Holder Dispute Input Received",
       "type": "n8n-nodes-base.gmailTrigger",
       "typeVersion": 1,
       "position": [
-        880,
-        1600
-      ]
+        1648,
+        -1280
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
         "jsCode": "return [{ json: { ...$json, all_collected: $json.inputs_received >= $json.holder_count } }];"
       },
-      "id": "e0e8bf27-41c4-4f6f-84fd-9892324c2ced",
+      "id": "15414e4f-27a9-4621-8af8-3186bcc5f6be",
       "name": "Code: All Holder Inputs Collected?",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        1100,
-        1600
+        1872,
+        -1280
       ]
     },
     {
@@ -1193,90 +1461,116 @@
           ]
         }
       },
-      "id": "e1aa1fe3-a7e9-426f-bddd-5b23e554f8b1",
+      "id": "1e7ee923-9284-45cb-bd1b-2497a1dbc071",
       "name": "If All Inputs Collected",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        1320,
-        1600
+        2096,
+        -1280
       ]
     },
     {
       "parameters": {
         "operation": "update",
         "table": "disputes",
-        "updateKey": "id",
-        "columns": "resolution_status"
+        "columns": "resolution_status",
+        "additionalFields": {}
       },
-      "id": "feedd0b3-0e85-482d-b137-aebc374ebb53",
+      "id": "e0e30373-3604-4c62-ac53-4dc0470ecb01",
       "name": "PG: Finalize Dispute Resolution",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1540,
-        1550
-      ]
+        2320,
+        -1328
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "update",
         "table": "disputes",
-        "updateKey": "id",
-        "columns": "resolution_status"
+        "columns": "resolution_status",
+        "additionalFields": {}
       },
-      "id": "954b63e1-ec92-4a27-8a72-1f09fecea229",
+      "id": "50dd5e78-01fa-415e-aa37-2351344dc197",
       "name": "PG: Single-Holder Dispute Resolution",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        660,
-        1700
-      ]
+        1440,
+        -1184
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "audit_log",
         "columns": "event_type, account_id, details, created_at",
         "additionalFields": {}
       },
-      "id": "4672b269-6cec-4072-ad3a-3d5c4633011d",
+      "id": "9b551f15-5208-4cd8-ade1-54ff9712342a",
       "name": "PG: Log Dispute Finalized (Audit)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1760,
-        1550
-      ]
+        2528,
+        -1328
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
+        "httpMethod": "POST",
         "path": "minor-account-action",
-        "httpMethod": "POST"
+        "options": {}
       },
-      "id": "d68d2f6e-ec08-4a5b-b247-ac279b3c8313",
+      "id": "a84e5295-bf98-4fc6-950c-5c344e3ae90a",
       "name": "Webhook: Minor Account Action Request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        0,
-        1850
-      ]
+        768,
+        -1024
+      ],
+      "webhookId": "c498691e-8a54-41d9-836c-efb871795f79"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT h.role, a.type, a.dob_of_minor FROM account_holders h JOIN accounts a ON a.id = h.account_id WHERE a.id = '{{$json.account_id}}' AND h.user_id = '{{$json.requesting_user_id}}';"
+        "query": "SELECT h.role, a.type, a.dob_of_minor FROM account_holders h JOIN accounts a ON a.id = h.account_id WHERE a.id = '{{$json.account_id}}' AND h.user_id = '{{$json.requesting_user_id}}';",
+        "additionalFields": {}
       },
-      "id": "94c2aa4e-4a1e-4ddb-af61-bededc8147ca",
+      "id": "3a4c2f07-fe48-44e8-b6bd-6259c7a37f7a",
       "name": "PG: Get Holder Role On Minor Account",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        1850
-      ]
+        992,
+        -1024
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -1284,34 +1578,40 @@
           "string": [
             {
               "value1": "={{$json.role}}",
-              "operation": "equal",
               "value2": "guardian"
             }
           ]
         }
       },
-      "id": "f7d38dfb-34a7-4106-b7a1-d766a9a35a69",
+      "id": "c3f1246b-1ae9-4caf-a6c4-52502871690c",
       "name": "If Requester Is Guardian",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        440,
-        1850
+        1216,
+        -1024
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "-- executes the requested write action (transfer/manage) on behalf of the minor account\nINSERT INTO transactions (idempotency_key, account_id, amount, type, status) VALUES ('{{$json.request_id}}', '{{$json.account_id}}', {{$json.amount}}, '{{$json.direction}}', 'settled') ON CONFLICT (idempotency_key) DO NOTHING;"
+        "query": "-- executes the requested write action (transfer/manage) on behalf of the minor account\nINSERT INTO transactions (idempotency_key, account_id, amount, type, status) VALUES ('{{$json.request_id}}', '{{$json.account_id}}', {{$json.amount}}, '{{$json.direction}}', 'settled') ON CONFLICT (idempotency_key) DO NOTHING;",
+        "additionalFields": {}
       },
-      "id": "593ef74b-04b7-4b03-8764-db3ad822dd74",
+      "id": "4c9cf6f4-0095-4546-b653-3ec9867d61e2",
       "name": "PG: Execute Guardian Action",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        660,
-        1800
-      ]
+        1440,
+        -1072
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -1319,191 +1619,242 @@
           "string": [
             {
               "value1": "={{$json.action_type}}",
-              "operation": "equal",
               "value2": "view"
             }
           ]
         }
       },
-      "id": "0efe8f94-019f-4c8a-b47f-06d924734880",
+      "id": "0894fb21-7f12-423b-b683-df9e9954c61f",
       "name": "If Action Is Read-Only (Minor)",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        660,
-        1900
+        1440,
+        -976
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT * FROM transactions WHERE account_id = '{{$json.account_id}}' ORDER BY created_at DESC LIMIT 50;"
+        "query": "SELECT * FROM transactions WHERE account_id = '{{$json.account_id}}' ORDER BY created_at DESC LIMIT 50;",
+        "additionalFields": {}
       },
-      "id": "ca4ed110-5b19-4953-ad83-7afa558478e5",
+      "id": "6a9b25f4-51cb-4a21-9cee-4e1372d29a4e",
       "name": "PG: Return Minor View Data",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        880,
-        1850
-      ]
+        1648,
+        -1024
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "audit_log",
         "columns": "event_type, account_id, details, created_at",
         "additionalFields": {}
       },
-      "id": "61525989-e198-49cc-94f7-b184b90f3239",
+      "id": "978fee73-ea0b-4bb9-bb3f-e2370f4cd824",
       "name": "PG: Log Rejected Minor Write Attempt (Audit)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        880,
-        1950
-      ]
+        1648,
+        -928
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "triggerTimes": {
           "item": [
             {
-              "mode": "everyDay",
-              "hour": 6,
-              "minute": 0
+              "hour": 6
             }
           ]
         }
       },
-      "id": "ed3fa09f-02e3-4d92-acac-41f847c724d3",
+      "id": "e32b3422-6e6f-4666-ad61-1381d074f424",
       "name": "Daily Cron (Age Check)",
       "type": "n8n-nodes-base.cron",
       "typeVersion": 1,
       "position": [
-        0,
-        2050
+        768,
+        -832
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT a.id AS account_id, a.dob_of_minor, g.email AS guardian_email FROM accounts a JOIN account_holders g ON g.account_id = a.id AND g.role='guardian' WHERE a.type = 'minor' AND a.dob_of_minor + INTERVAL '18 years' = CURRENT_DATE + INTERVAL '30 days';"
+        "query": "SELECT a.id AS account_id, a.dob_of_minor, g.email AS guardian_email FROM accounts a JOIN account_holders g ON g.account_id = a.id AND g.role='guardian' WHERE a.type = 'minor' AND a.dob_of_minor + INTERVAL '18 years' = CURRENT_DATE + INTERVAL '30 days';",
+        "additionalFields": {}
       },
-      "id": "e7b62b77-cefa-4234-b9cd-fb5d546f351e",
+      "id": "6ba3d810-4f79-4212-8342-59e4f4f11dcb",
       "name": "PG: Find Minors Turning 18 In 30 Days",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        2000
-      ]
+        992,
+        -880
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.guardian_email}}",
-        "subject": "Account will convert to full access in 30 days",
-        "message": "This minor account will automatically convert to full independent access in 30 days when the account holder turns 18. Guardian oversight will end at that point."
+        "operation": "send"
       },
-      "id": "9dbc444c-a7c4-446f-af79-06728f4b743f",
+      "id": "3757badd-6e3a-4070-bfbe-e396050895ed",
       "name": "Gmail: Warn Guardian (30 Days To Conversion)",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        440,
-        2000
-      ]
+        1216,
+        -880
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT a.id AS account_id, g.email AS guardian_email, m.email AS minor_email FROM accounts a JOIN account_holders g ON g.account_id = a.id AND g.role='guardian' JOIN account_holders m ON m.account_id = a.id AND m.role='minor' WHERE a.type = 'minor' AND a.dob_of_minor + INTERVAL '18 years' = CURRENT_DATE;"
+        "query": "SELECT a.id AS account_id, g.email AS guardian_email, m.email AS minor_email FROM accounts a JOIN account_holders g ON g.account_id = a.id AND g.role='guardian' JOIN account_holders m ON m.account_id = a.id AND m.role='minor' WHERE a.type = 'minor' AND a.dob_of_minor + INTERVAL '18 years' = CURRENT_DATE;",
+        "additionalFields": {}
       },
-      "id": "c6ac51ab-2e54-44ea-b528-96cb2b405975",
+      "id": "0b475a86-b4f2-42c1-85d0-8721521ea53b",
       "name": "PG: Find Minors Turning 18 Today",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        2100
-      ]
+        992,
+        -784
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "update",
         "table": "accounts",
-        "updateKey": "id",
-        "columns": "type"
+        "columns": "type",
+        "additionalFields": {}
       },
-      "id": "a5bebcad-97ec-419f-a51a-1e3828ff8527",
+      "id": "8a7132ed-14f3-4347-9cef-483ace3b02f0",
       "name": "PG: Convert Account To Full Access",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        440,
-        2100
-      ]
+        1216,
+        -784
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "update",
         "table": "account_holders",
         "updateKey": "account_id",
-        "columns": "role"
+        "columns": "role",
+        "additionalFields": {}
       },
-      "id": "692f65fc-f8e6-45f9-ad9a-1091956aabfd",
+      "id": "e1a322dc-b079-4988-8d5a-966c54ac2fac",
       "name": "PG: Update Holder Role (Minor -> Primary)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        660,
-        2100
-      ]
+        1440,
+        -784
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.minor_email}}",
-        "subject": "Your account now has full independent access",
-        "message": "Happy 18th! Your account has converted to full access. Guardian oversight has ended."
+        "operation": "send"
       },
-      "id": "f67eee8d-7428-4ed2-9084-cf4b50879b2e",
+      "id": "878346d1-5763-4374-af3a-7ec4883042b4",
       "name": "Gmail: Notify Conversion Complete",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        880,
-        2100
-      ]
+        1648,
+        -784
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
+        "httpMethod": "POST",
         "path": "add-holder-request",
-        "httpMethod": "POST"
+        "options": {}
       },
-      "id": "d8e630f5-a383-4252-8bca-992dde30c11f",
+      "id": "c25aa29b-570d-4f75-830f-e62bef956acc",
       "name": "Webhook: Add Holder Request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        0,
-        2250
-      ]
+        768,
+        -624
+      ],
+      "webhookId": "8fe869fc-0af0-4e30-b78d-3fd81cf3507d"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT on_hold, (SELECT COALESCE(SUM(amount),0) FROM transactions WHERE account_id = accounts.id AND type='debt') AS existing_debt FROM accounts WHERE id = '{{$json.account_id}}';"
+        "query": "SELECT on_hold, (SELECT COALESCE(SUM(amount),0) FROM transactions WHERE account_id = accounts.id AND type='debt') AS existing_debt FROM accounts WHERE id = '{{$json.account_id}}';",
+        "additionalFields": {}
       },
-      "id": "14bfb1b3-b8f6-4d43-84d1-20ef113a71bd",
+      "id": "9870f8f4-58b8-49e2-a586-ac66b169fb35",
       "name": "PG: Check Existing Debt/Holds",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        2250
-      ]
+        992,
+        -624
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -1517,40 +1868,49 @@
           "number": [
             {
               "value1": "={{$json.existing_debt}}",
-              "operation": "larger",
-              "value2": 0
+              "operation": "larger"
             }
           ]
         },
         "combineOperation": "any"
       },
-      "id": "d8dcede3-aad2-4055-8a6a-fb72451d7301",
+      "id": "0ef1c50c-0ab5-4195-9d6a-52c09f0657dd",
       "name": "If Debt Or Hold Exists",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        440,
-        2250
+        1216,
+        -624
       ]
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.new_holder_email}}",
-        "subject": "Acknowledge existing account status before joining",
-        "message": "This account currently has an existing debt/hold of {{$json.existing_debt}}. You will NOT be liable for this past balance, but you will share liability for anything from the point you join onward. Please confirm to proceed."
+        "operation": "send"
       },
-      "id": "87ee4a34-725c-4274-adfe-aa7d7cb25e3f",
+      "id": "014136f9-0df4-4ca1-b1e6-b20b788d5a15",
       "name": "Gmail: Request New Holder Acknowledgement",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        660,
-        2200
-      ]
+        1440,
+        -672
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
         "filters": {
           "labelIds": [
             "INBOX"
@@ -1558,14 +1918,20 @@
           "q": "subject:(Acknowledge existing account status before joining)"
         }
       },
-      "id": "c0af3075-4c34-4889-b0e4-a61a0b9bb0e5",
+      "id": "5bca494c-fe7b-4f97-81a7-e1eccdbfd61d",
       "name": "Gmail Trigger: Acknowledgement Received",
       "type": "n8n-nodes-base.gmailTrigger",
       "typeVersion": 1,
       "position": [
-        880,
-        2200
-      ]
+        1648,
+        -672
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
@@ -1578,195 +1944,244 @@
           ]
         }
       },
-      "id": "bbcfc1db-c594-4b62-bfde-07921c4b4d3b",
+      "id": "ab4e90cf-20a3-4130-8b48-b2afd3c12bb0",
       "name": "If Acknowledged",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        1100,
-        2200
+        1872,
+        -672
       ]
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "account_holders",
         "columns": "account_id, user_id, role, liable_from",
         "additionalFields": {}
       },
-      "id": "5645061d-782a-4282-a9a2-ea8ab78b4b7e",
+      "id": "0143b453-aaf7-431f-88ee-b31875e9a5b9",
       "name": "PG: Add Holder (Post-Ack, Liability From Now)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1320,
-        2150
-      ]
+        2096,
+        -736
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "audit_log",
         "columns": "event_type, account_id, details, created_at",
         "additionalFields": {}
       },
-      "id": "a73ee91d-8f3b-4462-9376-dce666c22bcc",
+      "id": "b3eaa9c7-1f1a-47d1-875d-6208179a6e64",
       "name": "PG: Log Add-Holder Declined (Audit)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1320,
-        2250
-      ]
+        2096,
+        -624
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "account_holders",
         "columns": "account_id, user_id, role, liable_from",
         "additionalFields": {}
       },
-      "id": "bd5e4b60-8028-45fd-9dc7-6b2dce229889",
+      "id": "8c67bccc-e961-43a1-969f-bf90a3e2a50d",
       "name": "PG: Add Holder (No Debt, Direct)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        660,
-        2320
-      ]
+        1440,
+        -560
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
+        "httpMethod": "POST",
         "path": "create-single-account",
-        "httpMethod": "POST"
+        "options": {}
       },
-      "id": "54ffe285-39b7-4c86-9a08-acc24c6be915",
+      "id": "a6125a9f-0e3d-495b-ab98-d0d90580a0bd",
       "name": "Webhook: Create Single-Holder Account",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        0,
-        2450
-      ]
+        768,
+        -432
+      ],
+      "webhookId": "2620b0d6-a4d4-4566-9a8c-599bc17f0fcd"
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "accounts",
         "columns": "type, balance, reported_balance, on_hold",
         "additionalFields": {}
       },
-      "id": "d84a2d5a-a4e8-4f46-a46f-b37b2cd5feeb",
+      "id": "984b661e-8504-4b2c-9683-c6e4da5bb2d8",
       "name": "PG: Insert Single-Holder Account",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        2450
-      ]
+        992,
+        -432
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "account_holders",
         "columns": "account_id, user_id, role, authority_model",
         "additionalFields": {}
       },
-      "id": "6a7b219c-f0c7-4b0f-b07a-025d93ae402b",
+      "id": "edfef9a7-0678-4133-bcf0-6dec0f8131ca",
       "name": "PG: Insert Primary Holder",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        440,
-        2450
-      ]
+        1216,
+        -432
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
+        "httpMethod": "POST",
         "path": "create-joint-account",
-        "httpMethod": "POST"
+        "options": {}
       },
-      "id": "84e939a9-84c7-46b4-8fed-bd1cd7bf7f4f",
+      "id": "c2a63e8c-bed7-4b5c-884b-da2ce21afcd5",
       "name": "Webhook: Create Joint Account",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        0,
-        2550
-      ]
+        768,
+        -336
+      ],
+      "webhookId": "ea15bc43-5905-4bbc-b89e-c4969b9809e6"
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "accounts",
         "columns": "type, authority_model, balance, reported_balance, on_hold",
         "additionalFields": {}
       },
-      "id": "7a348e6c-6b2e-4291-8060-c43f96ab8e00",
+      "id": "0ac92edc-18c2-4fdc-9789-d200961a4ba3",
       "name": "PG: Insert Joint Account",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        2550
-      ]
+        992,
+        -336
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "batchSize": 1
+        "batchSize": 1,
+        "options": {}
       },
-      "id": "64c1cfca-da3c-419e-be22-e42e6f13fe86",
+      "id": "0b6ba73a-ce01-4129-9f44-1ab785c6978e",
       "name": "Split: Each Holder In Request",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 1,
       "position": [
-        440,
-        2550
+        1216,
+        -336
       ]
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "account_holders",
         "columns": "account_id, user_id, role, authority_model",
         "additionalFields": {}
       },
-      "id": "8643d6dc-0b9a-4789-b18b-3650a79b9490",
+      "id": "4a77f8fa-7ea1-446a-b99e-71a956f49ef5",
       "name": "PG: Insert Joint Holder Row",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        660,
-        2550
-      ]
+        1440,
+        -336
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
+        "httpMethod": "POST",
         "path": "transfer-request",
-        "httpMethod": "POST"
+        "options": {}
       },
-      "id": "fb358013-8ecf-48dc-91a4-a27c25729095",
+      "id": "39ec3038-2817-4bd9-b3ed-987d5f0233cc",
       "name": "Webhook: P2P Transfer Request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        0,
-        2700
-      ]
+        768,
+        -176
+      ],
+      "webhookId": "6be2704c-9201-45b4-baa8-c41c29d5c540"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "BEGIN; SELECT balance FROM accounts WHERE id = '{{$json.sender_id}}' FOR UPDATE; UPDATE accounts SET balance = balance - {{$json.amount}} WHERE id = '{{$json.sender_id}}' AND balance >= {{$json.amount}} RETURNING id;"
+        "query": "BEGIN; SELECT balance FROM accounts WHERE id = '{{$json.sender_id}}' FOR UPDATE; UPDATE accounts SET balance = balance - {{$json.amount}} WHERE id = '{{$json.sender_id}}' AND balance >= {{$json.amount}} RETURNING id;",
+        "additionalFields": {}
       },
-      "id": "9b6353e3-8326-44fd-9e46-886d4588cdff",
+      "id": "9e6a609c-c285-4c06-938e-fc530d65525a",
       "name": "PG: BEGIN + Debit Sender (Locked)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        2700
-      ]
+        992,
+        -176
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -1774,64 +2189,80 @@
           "number": [
             {
               "value1": "={{$json.length}}",
-              "operation": "notEqual",
-              "value2": 0
+              "operation": "notEqual"
             }
           ]
         }
       },
-      "id": "19fe7855-a736-4bfb-9344-9519c4b19849",
+      "id": "5f7ec9f7-af4f-4a42-948a-c0aadc5a81f6",
       "name": "If Debit Succeeded",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        440,
-        2700
+        1216,
+        -176
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "ROLLBACK;"
+        "query": "ROLLBACK;",
+        "additionalFields": {}
       },
-      "id": "96d3c223-3bc0-4754-b09c-f381568a1bcd",
-      "name": "PG: ROLLBACK (Debit Failed \u2014 Insufficient Funds)",
+      "id": "47b2f655-70f9-4d1f-9219-07d5ce19c3fd",
+      "name": "PG: ROLLBACK (Debit Failed — Insufficient Funds)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        660,
-        2760
-      ]
+        1440,
+        -112
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.sender_email}}",
-        "subject": "Transfer could not be completed",
-        "message": "Your transfer of {{$json.amount}} could not be processed due to insufficient funds. No money has left your account."
+        "operation": "send"
       },
-      "id": "6ddb1dd5-8a96-49ea-a880-5fe05e7406c2",
+      "id": "fc6ba801-38ff-4453-a8fc-c28ce81e6aaa",
       "name": "Gmail: Notify Sender (Debit Failed)",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        880,
-        2760
-      ]
+        1648,
+        -112
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE accounts SET balance = balance + {{$json.amount}} WHERE id = '{{$json.receiver_id}}' RETURNING id;"
+        "query": "UPDATE accounts SET balance = balance + {{$json.amount}} WHERE id = '{{$json.receiver_id}}' RETURNING id;",
+        "additionalFields": {}
       },
-      "id": "c55106ff-65cd-444b-8fc6-7097276c6bb8",
+      "id": "f8aa7e30-3803-4e5c-9bc3-4250ad094ffd",
       "name": "PG: Credit Receiver",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        660,
-        2650
-      ]
+        1440,
+        -224
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -1839,235 +2270,287 @@
           "number": [
             {
               "value1": "={{$json.length}}",
-              "operation": "notEqual",
-              "value2": 0
+              "operation": "notEqual"
             }
           ]
         }
       },
-      "id": "e6319c6e-78e9-4db2-b35e-aac7dc06e5ae",
+      "id": "9ed8c344-7398-42d2-a6fd-0ba6f9422f8c",
       "name": "If Credit Succeeded",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        880,
-        2650
+        1648,
+        -224
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO transactions (idempotency_key, account_id, amount, type, status) VALUES ('{{$json.request_id}}', '{{$json.sender_id}}', {{$json.amount}}, 'debit', 'settled') ON CONFLICT DO NOTHING; COMMIT;"
+        "query": "INSERT INTO transactions (idempotency_key, account_id, amount, type, status) VALUES ('{{$json.request_id}}', '{{$json.sender_id}}', {{$json.amount}}, 'debit', 'settled') ON CONFLICT DO NOTHING; COMMIT;",
+        "additionalFields": {}
       },
-      "id": "fc63c1ca-a96f-4c7c-be5f-817c5d29b466",
+      "id": "38cd7d5d-6939-4934-8708-acb4d25de040",
       "name": "PG: COMMIT (Both Legs Succeeded)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1100,
-        2600
-      ]
+        1872,
+        -272
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE accounts SET balance = balance + {{$json.amount}} WHERE id = '{{$json.sender_id}}'; ROLLBACK;"
+        "query": "UPDATE accounts SET balance = balance + {{$json.amount}} WHERE id = '{{$json.sender_id}}'; ROLLBACK;",
+        "additionalFields": {}
       },
-      "id": "8de2459c-a132-422b-9283-09719a637730",
-      "name": "PG: ROLLBACK (Credit Failed \u2014 Reverse Debit)",
+      "id": "2bd0bab0-432d-4404-9693-b369feab92be",
+      "name": "PG: ROLLBACK (Credit Failed — Reverse Debit)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1100,
-        2700
-      ]
+        1872,
+        -176
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.sender_email}}",
-        "subject": "Your transfer was rolled back",
-        "message": "We couldn't complete the credit side of your transfer, so the full amount has been reversed and never left your account."
+        "operation": "send"
       },
-      "id": "2d996cef-f997-436e-bad2-b32e79533dc9",
+      "id": "03c21155-0d0a-4524-bcb1-96a7a90b3f8a",
       "name": "Gmail: Notify Sender (Transfer Rolled Back)",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        1320,
-        2700
-      ]
+        2096,
+        -176
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
+        "httpMethod": "POST",
         "path": "chargeback-event",
-        "httpMethod": "POST"
+        "options": {}
       },
-      "id": "2f294d43-4857-4425-918d-d60bf7ea69b2",
+      "id": "770cad9f-d273-4ae2-aa0c-e70b75809f8f",
       "name": "Webhook: Chargeback Event",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        0,
-        2900
-      ]
+        768,
+        32
+      ],
+      "webhookId": "74b8773e-739c-43a6-bcd7-4ded0c0133ea"
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "transactions",
         "columns": "account_id, amount, type, status",
         "additionalFields": {}
       },
-      "id": "62a9c48f-5a51-48e6-bc46-567d8d51b888",
+      "id": "0ee80e94-ef76-4af3-a958-cea1d47235cd",
       "name": "PG: Insert Debt Record (Negative Balance)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        220,
-        2900
-      ]
+        992,
+        32
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
         "table": "approval_queue",
         "columns": "type, account_id, payload, status",
         "additionalFields": {}
       },
-      "id": "a793ecd1-c9d7-4125-b018-1b723bf07356",
+      "id": "b82b386a-4836-4b73-998b-bf64e18bb083",
       "name": "PG: Create Repayment Plan",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        440,
-        2900
-      ]
+        1216,
+        32
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{$json.customer_email}}",
-        "subject": "Chargeback processed \u2014 repayment plan created",
-        "message": "A chargeback of {{$json.amount}} has been processed on an already-spent transaction. This has been recorded as account debt with a repayment plan attached. Please review."
+        "operation": "send"
       },
-      "id": "a1aa4199-b6b0-4da1-9425-0b75dc67fb7f",
+      "id": "25c6412c-cd7a-4894-9de8-a575a6b83a89",
       "name": "Gmail: Notify Customer Of Debt + Repayment Plan",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        660,
-        2900
-      ]
+        1440,
+        32
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT requires_human FROM autonomy_rules WHERE action_type = 'fraud_hold_release';"
+        "query": "SELECT requires_human FROM autonomy_rules WHERE action_type = 'fraud_hold_release';",
+        "additionalFields": {}
       },
-      "id": "744031c8-26a3-4614-8c57-e7770d0bfd72",
+      "id": "07f6a8ec-5dff-4ea6-8dcb-6dcd276749d7",
       "name": "PG: Load Autonomy Rule",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1980,
-        650
-      ]
+        2752,
+        -2224
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "jsCode": "// Hard gate: if autonomy_rules says requires_human=true for this action,\n// this node throws unless the request carries an authenticated ops user id.\nif ($json.requires_human && !$json.ops_user_id) {\n  throw new Error('Blocked by autonomy rule: fraud_hold_release requires a human ops actor.');\n}\nreturn items;"
       },
-      "id": "ee653b60-609b-4ab3-b5b0-01e2161ea292",
-      "name": "Code: Enforce \u2014 Fraud Release Needs Human",
+      "id": "2520dc01-f867-459e-9351-20c3fa98d343",
+      "name": "Code: Enforce — Fraud Release Needs Human",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        1980,
-        780
+        2752,
+        -2096
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT requires_human FROM autonomy_rules WHERE action_type = 'rag_reply_send';"
+        "query": "SELECT requires_human FROM autonomy_rules WHERE action_type = 'rag_reply_send';",
+        "additionalFields": {}
       },
-      "id": "535a6836-4e92-406b-bd38-944a8f291905",
+      "id": "79a28a2d-a075-4e10-86b6-05128346f3d1",
       "name": "PG: Load Autonomy Rule (RAG Send)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1980,
-        850
-      ]
+        2752,
+        -2032
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
         "jsCode": "if ($json.requires_human && !$json.approver_user_id) {\n  throw new Error('Blocked by autonomy rule: rag_reply_send requires a human approver.');\n}\nreturn items;"
       },
-      "id": "5f6c75ca-13e3-4968-9d44-7c084bb5ec82",
-      "name": "Code: Enforce \u2014 RAG Send Needs Human",
+      "id": "d800c79b-f6f1-4d0b-9a11-913d5069d4ef",
+      "name": "Code: Enforce — RAG Send Needs Human",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        2100,
-        850
+        2880,
+        -2032
       ]
     },
     {
       "parameters": {
         "jsCode": "// Reads the customer's reply email body for APPROVE / DECLINE and\n// matches the thread's request_id (parsed from a hidden reference tag\n// n8n inserted in the original outbound email) so we know which\n// pending transfer this reply resolves.\nconst body = ($json.text || '').toUpperCase();\nreturn [{ json: { ...$json, approved: body.includes('APPROVE') && !body.includes('DECLINE') } }];"
       },
-      "id": "2e801ec4-90c6-4332-aca8-c388cd239481",
+      "id": "88276c17-50a9-4200-8d61-44d150bc20e9",
       "name": "Parse Gmail Reply: Co-Signature",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        1460,
-        1290
+        2240,
+        -1584
       ]
     },
     {
       "parameters": {
         "jsCode": "const body = ($json.text || '').toUpperCase();\nreturn [{ json: { ...$json, vote: body.includes('APPROVE') ? 'approve' : 'reject' } }];"
       },
-      "id": "96b7b57f-c85b-4cb1-849b-486eafba5ff4",
+      "id": "266af730-86b8-4820-9ec2-d1116ec259c2",
       "name": "Parse Gmail Reply: Holder Vote",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        1460,
-        1390
+        2240,
+        -1488
       ]
     },
     {
       "parameters": {
         "jsCode": "const body = ($json.text || '').toUpperCase();\nreturn [{ json: { ...$json, acknowledged: body.includes('CONFIRM') || body.includes('I ACKNOWLEDGE') } }];"
       },
-      "id": "b4cb24a5-3a20-482c-83c3-37cb5aa55136",
+      "id": "ed024e4f-4a3d-4fef-9501-37d2e562db23",
       "name": "Parse Gmail Reply: Holder Acknowledgement",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        1020,
-        2240
+        1792,
+        -640
       ]
     },
     {
       "parameters": {
         "jsCode": "// Each reply increments inputs_received; the calling flow's account_id\n// / dispute_id is recovered from the email thread reference tag.\nreturn [{ json: { ...$json, input_text: $json.text, inputs_received: ($json.inputs_received || 0) + 1 } }];"
       },
-      "id": "cd0cabe1-0537-4624-a54d-6a2813f3225f",
+      "id": "5817da52-75ea-4cda-b040-8b1d08828072",
       "name": "Parse Gmail Reply: Dispute Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        1020,
-        1640
+        1792,
+        -1232
       ]
     },
     {
       "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
         "filters": {
           "labelIds": [
             "INBOX"
@@ -2075,26 +2558,32 @@
           "q": "subject:(A recent transaction has been placed on hold)"
         }
       },
-      "id": "cd267b33-3f84-4423-ba64-9c23817dc59c",
+      "id": "4ff5b3ff-c843-4e2a-9be1-9043b53f4ae6",
       "name": "Gmail Trigger: Fraud Self-Attestation Reply",
       "type": "n8n-nodes-base.gmailTrigger",
       "typeVersion": 1,
       "position": [
-        880,
-        780
-      ]
+        1648,
+        -2096
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Customer's reply is a claim only \u2014 it queues ops review, it never\n// releases the hold by itself (matches the false-positive decision:\n// self-attestation triggers human review, it does not auto-release).\nreturn [{ json: { ...$json, customer_claims_legitimate: true } }];"
+        "jsCode": "// Customer's reply is a claim only — it queues ops review, it never\n// releases the hold by itself (matches the false-positive decision:\n// self-attestation triggers human review, it does not auto-release).\nreturn [{ json: { ...$json, customer_claims_legitimate: true } }];"
       },
-      "id": "d24cd2c9-221a-4296-950c-029f82818102",
+      "id": "4b2e4cc1-5041-4144-a163-6c0654f8bc03",
       "name": "Code: Parse Self-Attestation Claim",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        1100,
-        780
+        1872,
+        -2096
       ]
     },
     {
@@ -2102,141 +2591,144 @@
         "operation": "update",
         "table": "approval_queue",
         "updateKey": "account_id",
-        "columns": "payload"
+        "columns": "payload",
+        "additionalFields": {}
       },
-      "id": "a75c66cb-2b9a-4200-a4f8-689cd858386f",
+      "id": "a94f2167-c098-4589-ac4f-a766d41ac957",
       "name": "PG: Log Self-Attestation For Ops Review",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
       "position": [
-        1320,
-        780
-      ]
+        2096,
+        -2096
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "6e7g27phikBHF3xE",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "ops-team@bank.internal",
-        "subject": "Customer disputes fraud hold \u2014 review needed",
-        "message": "Customer replied via email claiming this transaction is legitimate. The hold has NOT been released automatically. Please review and submit your decision through the fraud-decision endpoint."
+        "operation": "send"
       },
-      "id": "efe5a542-722e-4d57-af8f-5c508c843c1d",
-      "name": "Gmail: Notify Ops \u2014 Self-Attestation Needs Review",
+      "id": "975ce8dc-319f-4989-99e9-8ce26df269ca",
+      "name": "Gmail: Notify Ops — Self-Attestation Needs Review",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 1,
       "position": [
-        1540,
-        780
-      ]
+        2320,
+        -2096
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "bqFjk5OL6wtkojQ4",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
-        "content": "## Gmail-Only Customer Channel (compulsory constraint)\n\nEvery customer-originated input in this workflow is read from Gmail \u2014 never a generic webhook. Webhook nodes are kept ONLY for system-to-system events with no human customer on the other end (Python fraud-score POST, internal ops-decision submission).\n\n**Gmail Trigger nodes (customer replies parsed from email body):**\n- Co-Signature Response \u2192 APPROVE/DECLINE for both-signature transfers\n- Holder Vote Received \u2192 approve/reject vote on holder removal\n- Holder Dispute Input Received \u2192 each holder's dispute input text\n- Acknowledgement Received \u2192 CONFIRM / I ACKNOWLEDGE for add-holder-with-debt\n- Fraud Self-Attestation Reply \u2192 customer's false-positive claim (queues ops review, never auto-releases)\n\nSee TRD \u00a73 \"Gmail-Only Customer Channel \u2014 Enforcement Detail\" for the full writeup.",
+        "content": "## Gmail-Only Customer Channel (compulsory constraint)\n\nEvery customer-originated input in this workflow is read from Gmail — never a generic webhook. Webhook nodes are kept ONLY for system-to-system events with no human customer on the other end (Python fraud-score POST, internal ops-decision submission).\n\n**Gmail Trigger nodes (customer replies parsed from email body):**\n- Co-Signature Response → APPROVE/DECLINE for both-signature transfers\n- Holder Vote Received → approve/reject vote on holder removal\n- Holder Dispute Input Received → each holder's dispute input text\n- Acknowledgement Received → CONFIRM / I ACKNOWLEDGE for add-holder-with-debt\n- Fraud Self-Attestation Reply → customer's false-positive claim (queues ops review, never auto-releases)\n\nSee TRD §3 \"Gmail-Only Customer Channel — Enforcement Detail\" for the full writeup.",
         "height": 420,
         "width": 460,
         "color": 5
       },
-      "id": "sticky-gmail-only-note",
+      "id": "5c7a7616-bf1c-4931-b4b6-60b20713c99d",
       "name": "Note: Gmail-Only Customer Channel",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        0,
-        -460
+        768,
+        -3344
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.PYTHON_SERVICE_URL }}/reconciliation-check",
+        "url": "=https://banking-system-s4rl.onrender.com/reconciliation-check",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ { \"account_id\": $json.account_id, \"ledger_sum\": $json.ledger_sum, \"reported_balance\": $json.reported_balance } }}",
         "options": {}
       },
-      "id": "http-reconciliation-check",
+      "id": "9730d60b-38f9-41a9-8c37-06e2e9a9ae2a",
       "name": "HTTP: Reconciliation Check (Python Service)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        440,
-        220
+        1216,
+        -2656
       ]
     },
     {
       "parameters": {
         "modelName": "embed-english-v3.0"
       },
-      "id": "embeddings-cohere-rag",
+      "id": "b3b8c7e2-1aa8-4ac9-9bc5-6f5e60bd144a",
       "name": "Embeddings: Cohere",
       "type": "@n8n/n8n-nodes-langchain.embeddingsCohere",
       "typeVersion": 1,
       "position": [
-        660,
-        1120
-      ]
+        1440,
+        -1760
+      ],
+      "credentials": {
+        "cohereApi": {
+          "id": "WGDht9BmwlwarrZz",
+          "name": "Cohere account"
+        }
+      }
     },
     {
       "parameters": {
         "jsCode": "// Collapse the retrieved policy chunks + the account pull + the original\n// email into the single { text, accountContext, policyContext } shape the\n// grounded drafting prompt actually needs. Nothing upstream built these\n// fields before -- the prompt was referencing empty values.\nconst policyContext = items.length\n  ? items.map(i => `[${(i.json.metadata && i.json.metadata.policy_id) || 'UNKNOWN'}] ${i.json.pageContent || ''}`).join('\\n\\n')\n  : 'NO_MATCHING_POLICY_FOUND';\n\nconst emailItem = $('Gmail Trigger: New Support Email').first().json;\nconst accountRows = $('PG: Pull Account + History').all().map(i => i.json);\n\nlet accountContext = 'No account record found.';\nif (accountRows.length > 0) {\n  const acc = accountRows[0];\n  const recentTx = accountRows\n    .filter(r => r.created_at)\n    .slice(0, 5)\n    .map(r => `${r.created_at}: ${r.type} ${r.amount}`)\n    .join('; ');\n  accountContext = `Account ${acc.account_id}, balance ${acc.balance}, on_hold=${acc.on_hold}. Recent transactions: ${recentTx || 'none'}.`;\n}\n\nreturn [{\n  json: {\n    text: emailItem.text,\n    accountContext,\n    policyContext\n  }\n}];"
       },
-      "id": "code-build-rag-context",
+      "id": "6a111f01-a543-401f-9e6b-7edf2900094f",
       "name": "Code: Build RAG Context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1100,
-        950
+        1872,
+        -1936
       ]
     },
     {
       "parameters": {},
-      "id": "manual-trigger-seed-index",
+      "id": "39e98aa0-3ab3-4341-9267-c791254b4139",
       "name": "Manual Trigger: Seed Policy Index (Run Once)",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
       "position": [
-        0,
-        3100
+        768,
+        224
       ]
     },
     {
       "parameters": {
         "jsCode": "// One-time seed content for the Pinecone policy index.\n// These are placeholder bank policies written for this capstone project --\n// there were no real policy documents to ingest, so this Code node stands in\n// for a document source. If real policy docs exist later, replace this node\n// with one that reads them (e.g. from Google Drive or Postgres) and keep the\n// rest of this branch (Doc Loader -> Embeddings -> Pinecone insert) as-is.\nconst policies = [{\"policy_id\": \"POL-001\", \"title\": \"Card Decline & Insufficient Funds\", \"text\": \"A card or transfer is declined whenever the requested amount exceeds the account's available balance (balance minus any on_hold amount). The system never allows a transaction that would push balance below zero except for the explicit debt-tracking flow used for reversals and chargebacks. When a decline happens, the customer must be told the specific reason (insufficient funds vs. account on hold vs. frozen) rather than a generic failure message, so they know what action to take next.\"}, {\"policy_id\": \"POL-002\", \"title\": \"Fraud Hold & False-Positive Resolution\", \"text\": \"Any transaction scoring above the fraud threshold triggers an automatic hold on the account (on_hold = true) without waiting for human review, because delaying a hold is riskier than a false alarm. The hold itself may be placed unsupervised. However, releasing a hold always requires a human ops decision \\u2014 automation is never allowed to release its own hold, even if the customer replies claiming the transaction is legitimate. A customer's self-attestation reply is logged for ops review, not treated as proof of innocence.\"}, {\"policy_id\": \"POL-003\", \"title\": \"Joint Account Authority & Dispute\", \"text\": \"Two-holder joint accounts default to either-or authority: either holder may transact alone unless both-signature mode was explicitly configured, which requires the other holder's email approval before a transfer executes. Accounts with three or more holders use majority-vote authority for holder-management actions (adding, removing a holder, or closing the account). Any single holder may open a dispute on a joint account; if the dispute concerns shared funds, all holders must provide input before it is finalized \\u2014 one holder cannot unilaterally resolve a dispute affecting the others.\"}, {\"policy_id\": \"POL-004\", \"title\": \"Standing Order Failure & Retry\", \"text\": \"Standing orders due on a weekend or bank holiday are shifted to the prior business day, never delayed to after the due date. If a standing order fails due to insufficient funds, it is automatically retried the next day, up to three attempts total. After the third consecutive failure the order is marked permanently failed and the customer is notified by email \\u2014 this notification does not require human sign-off since no funds have moved and there is no risk in sending it automatically.\"}, {\"policy_id\": \"POL-005\", \"title\": \"Chargeback & Reversal Debt\", \"text\": \"When a transfer's second leg fails after the first leg already succeeded (for example, a debit succeeds but the matching credit fails), the first leg is explicitly reversed before the transaction is rolled back, so the customer never loses funds to a partial failure. When a chargeback or reversal creates a negative balance because funds were already spent, this is recorded as a distinct debt-type transaction with an attached repayment plan \\u2014 never silently deducted from a future deposit. All reversal and chargeback processing requires human sign-off before the repayment plan is sent to the customer.\"}, {\"policy_id\": \"POL-006\", \"title\": \"Account Closure & Holder Removal\", \"text\": \"A joint account can only close when every holder agrees; if even one holder disagrees, the account is frozen rather than closed, and all holders are notified of the disagreement. Removing a single holder from a two-holder account requires mutual consent from both parties. On accounts with three or more holders, removing a holder requires a majority vote among the remaining holders, tallied only after every holder has had the chance to respond.\"}, {\"policy_id\": \"POL-007\", \"title\": \"Minor & Guardian Accounts\", \"text\": \"A minor account holder can only view account activity \\u2014 they cannot initiate transfers or manage the account. A linked guardian may perform write actions (transfers, standing orders, holder management) on the minor's behalf. Any write attempt made directly by a minor is rejected and logged to the audit trail rather than silently ignored, so there is a record of the attempt. Thirty days before a minor holder's 18th birthday, the guardian receives an advance-notice email; on the birthday itself the account automatically converts to full access and both parties are notified.\"}, {\"policy_id\": \"POL-008\", \"title\": \"General Support & Escalation\", \"text\": \"For any customer support request that does not clearly match a known policy \\u2014 including ambiguous complaints, questions outside the scope of documented rules, or requests where account context is insufficient to give a confident answer \\u2014 support responses must not guess. If there is no policy that clearly covers the situation, the correct response is to escalate to a human agent rather than invent an answer, since an incorrect but confident-sounding reply causes more harm than a short delay for human review.\"}];\nreturn policies.map(p => ({ json: p }));"
       },
-      "id": "code-sample-bank-policies",
+      "id": "9a13c601-a899-4b75-9ba5-09e99b047baf",
       "name": "Code: Sample Bank Policies (Placeholder Content)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        220,
-        3100
+        992,
+        224
       ]
     },
     {
       "parameters": {
-        "dataType": "json",
-        "jsonData": "={{ $json.text }}",
-        "metadata": {
-          "metadataValues": [
-            {
-              "name": "policy_id",
-              "value": "={{ $json.policy_id }}"
-            },
-            {
-              "name": "title",
-              "value": "={{ $json.title }}"
-            }
-          ]
-        }
+        "options": {}
       },
-      "id": "doc-loader-policy-text",
+      "id": "aeeffe71-f92f-4ce8-a92b-5ff04f834ede",
       "name": "Doc Loader: Policy Text",
       "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
       "typeVersion": 1,
       "position": [
-        440,
-        3250
+        1216,
+        384
       ]
     },
     {
@@ -2245,32 +2737,53 @@
         "pineconeIndex": "bank-policy-fraud-index",
         "options": {}
       },
-      "id": "pinecone-seed-index-insert",
+      "id": "00de76d1-ed87-46fb-889e-8ffb0af6d765",
       "name": "Pinecone: Seed Policy Index (Insert)",
       "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
       "typeVersion": 1,
       "position": [
-        660,
-        3100
-      ]
+        1440,
+        224
+      ],
+      "credentials": {
+        "pineconeApi": {
+          "id": "JE89xBkS5UVoY1Qj",
+          "name": "Pinecone account"
+        }
+      }
     },
     {
       "parameters": {
-        "content": "## One-Time Setup: Seed the Pinecone Index\n\nThis mini-branch is NOT part of the live 8 branches (A\u2013H) \u2014 it is a one-time manual step to populate Pinecone before Branch D's RAG support can retrieve anything.\n\n**Run this once, manually, before demoing Branch D:**\n1. Click \"Execute Workflow\" on the Manual Trigger below (or open this node and hit the play button).\n2. It seeds 8 placeholder bank policies (POL-001 to POL-008) into the `bank-policy-fraud-index`.\n\nThese policies are generated for this project since no real bank policy documents existed. If you later have real policy docs, swap the Code node for a document source (Google Drive, Postgres, etc.) and keep the Doc Loader \u2192 Embeddings \u2192 Pinecone insert chain the same.\n\nWithout running this once, Branch D will always return NO_CONFIDENT_ANSWER because the index is empty.",
+        "content": "## One-Time Setup: Seed the Pinecone Index\n\nThis mini-branch is NOT part of the live 8 branches (A–H) — it is a one-time manual step to populate Pinecone before Branch D's RAG support can retrieve anything.\n\n**Run this once, manually, before demoing Branch D:**\n1. Click \"Execute Workflow\" on the Manual Trigger below (or open this node and hit the play button).\n2. It seeds 8 placeholder bank policies (POL-001 to POL-008) into the `bank-policy-fraud-index`.\n\nThese policies are generated for this project since no real bank policy documents existed. If you later have real policy docs, swap the Code node for a document source (Google Drive, Postgres, etc.) and keep the Doc Loader → Embeddings → Pinecone insert chain the same.\n\nWithout running this once, Branch D will always return NO_CONFIDENT_ANSWER because the index is empty.",
         "height": 380,
         "width": 480,
         "color": 4
       },
-      "id": "sticky-seed-index-note",
+      "id": "692a0876-dd0a-47f8-8e04-6a238a6f2f40",
       "name": "Note: One-Time Index Seeding",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        0,
-        2950
+        128,
+        64
       ]
+    },
+    {
+      "parameters": {
+        "chunkSize": 5000,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        1312,
+        592
+      ],
+      "id": "9c59a5bf-aecc-43ef-b2bd-815b0b566e2d",
+      "name": "Recursive Character Text Splitter"
     }
   ],
+  "pinData": {},
   "connections": {
     "Nightly Cron (2AM)": {
       "main": [
@@ -2557,28 +3070,6 @@
         [
           {
             "node": "PG: Pull Account + History",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "PG: Pull Account + History": {
-      "main": [
-        [
-          {
-            "node": "Pinecone: Policy + Fraud-Pattern Search",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Pinecone: Policy + Fraud-Pattern Search": {
-      "main": [
-        [
-          {
-            "node": "Code: Similarity Threshold Guard",
             "type": "main",
             "index": 0
           }
@@ -2878,7 +3369,7 @@
       "main": [
         [
           {
-            "node": "Gmail: Notify Holders \u2014 Account Frozen",
+            "node": "Gmail: Notify Holders — Account Frozen",
             "type": "main",
             "index": 0
           }
@@ -3244,14 +3735,14 @@
         ],
         [
           {
-            "node": "PG: ROLLBACK (Debit Failed \u2014 Insufficient Funds)",
+            "node": "PG: ROLLBACK (Debit Failed — Insufficient Funds)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "PG: ROLLBACK (Debit Failed \u2014 Insufficient Funds)": {
+    "PG: ROLLBACK (Debit Failed — Insufficient Funds)": {
       "main": [
         [
           {
@@ -3284,14 +3775,14 @@
         ],
         [
           {
-            "node": "PG: ROLLBACK (Credit Failed \u2014 Reverse Debit)",
+            "node": "PG: ROLLBACK (Credit Failed — Reverse Debit)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "PG: ROLLBACK (Credit Failed \u2014 Reverse Debit)": {
+    "PG: ROLLBACK (Credit Failed — Reverse Debit)": {
       "main": [
         [
           {
@@ -3339,7 +3830,7 @@
       "main": [
         [
           {
-            "node": "Code: Enforce \u2014 Fraud Release Needs Human",
+            "node": "Code: Enforce — Fraud Release Needs Human",
             "type": "main",
             "index": 0
           }
@@ -3350,14 +3841,14 @@
       "main": [
         [
           {
-            "node": "Code: Enforce \u2014 RAG Send Needs Human",
+            "node": "Code: Enforce — RAG Send Needs Human",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Code: Enforce \u2014 RAG Send Needs Human": {
+    "Code: Enforce — RAG Send Needs Human": {
       "main": [
         [
           {
@@ -3438,7 +3929,7 @@
       "main": [
         [
           {
-            "node": "Gmail: Notify Ops \u2014 Self-Attestation Needs Review",
+            "node": "Gmail: Notify Ops — Self-Attestation Needs Review",
             "type": "main",
             "index": 0
           }
@@ -3515,14 +4006,30 @@
           }
         ]
       ]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Doc Loader: Policy Text",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate"
   },
-  "versionId": "15a30671-0cc6-4b94-9d7f-fad54533bcf4",
+  "versionId": "ab2c6429-0b61-4d43-bc0b-d1ba9f5f113b",
   "meta": {
-    "instanceId": "capstone-hackathon"
-  }
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9a726e85987042f9df8e4fbaa0deca00bb6d4d355b8bbad1dc2598d637302683"
+  },
+  "nodeGroups": [],
+  "id": "6FIZhmMkZIiRFLdJ",
+  "tags": []
 }
